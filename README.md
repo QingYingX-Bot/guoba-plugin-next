@@ -38,11 +38,21 @@
 
 ## 安装
 
-**① 下载** —— 在云崽根目录执行
+**① 下载** —— 在云崽根目录执行，三个源任选一个（内容完全一样，推荐国内的）
 
+**gitcode（国内直连最快）**
 ```bash
 git clone --depth=1 https://gitcode.com/ccxhan/guoba-plugin-next.git ./plugins/Guoba-Plugin/
-# GitHub 也行：https://github.com/cchanlan/guoba-plugin-next.git
+```
+
+**gitee（国内）**
+```bash
+git clone --depth=1 https://gitee.com/longhengmu/guoba-plugin-next.git ./plugins/Guoba-Plugin/
+```
+
+**GitHub**
+```bash
+git clone --depth=1 https://github.com/cchanlan/guoba-plugin-next.git ./plugins/Guoba-Plugin/
 ```
 
 **② 装依赖**
