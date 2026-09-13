@@ -29,10 +29,7 @@ export class GuobaLogin extends plugin {
   // autowired 是懒代理，锅巴服务端没启动成功时读它的任何属性都会抛 xxxService is not found
   replyServerFailed (err) {
     logger.error('[Guoba] 锅巴服务未就绪', err)
-    return this.reply(
-      '锅巴服务启动失败，可能是端口号占用，或者依赖没有安装完整，'
-      + '请查看控制台里锅巴启动相关的报错日志，或者发送“#锅巴帮助”获取相关帮助信息。'
-    )
+    return this.reply('锅巴服务启动失败，请发送“#锅巴帮助”。')
   }
 
   async resetLogin () {
@@ -48,8 +45,9 @@ export class GuobaLogin extends plugin {
     }
     this.loginSecurityService.resetCredentials()
     return this.reply(
-      '登录凭证已重置，账号密码、可信IP和可信设备已全部清空。\n'
-      + '现在可以发送“#锅巴登录”获取登录地址，在登录页点击“获取登录令牌”，令牌会私聊发给主人，登录后请尽快在“账号管理 - 登录安全”中重新设置账号密码。'
+      '登录凭证已重置，账号密码、可信IP和可信设备已清空。\n'
+      + '发送“#锅巴登录”获取登录地址，在登录页点“获取登录令牌”，'
+      + '登录后在“账号管理 - 登录安全”里重新设置账号密码。'
     )
   }
 
@@ -77,7 +75,7 @@ export class GuobaLogin extends plugin {
       if (list.length > 0) {
         message.push(...list)
       } else {
-        message.push('获取失败……')
+        message.push('地址获取失败，请稍后重试')
       }
     }
 
@@ -85,7 +83,7 @@ export class GuobaLogin extends plugin {
       if (custom && custom.length > 0) {
         pushAddress('自定义地址：', custom)
       } else {
-        message.push('当前启用了“仅发送自定义地址”，但未配置自定义地址。')
+        message.push('已开启“仅发送自定义地址”，但没填地址，请在锅巴面板的配置里补上。')
       }
     } else {
       if (custom && custom.length > 0) {
@@ -100,11 +98,11 @@ export class GuobaLogin extends plugin {
     }
 
     if (configured) {
-      message.push('若忘记密码，可发送“#锅巴重置密码”清空凭证重新初始化。')
+      message.push('忘记密码可发送“#锅巴重置密码”。')
     } else {
       message.push(
-        '尚未设置账号密码，请打开登录页点击“获取登录令牌”，令牌会私聊发给主人（五分钟内有效）。\n'
-        + '登录后请尽快在“账号管理 - 登录安全”里设置用户名和密码。'
+        '还没设置账号密码。打开登录页点“获取登录令牌”（令牌私聊发给主人，五分钟内有效），\n'
+        + '登录后在“账号管理 - 登录安全”里设置用户名和密码。'
       )
     }
 
@@ -129,7 +127,7 @@ export class GuobaLogin extends plugin {
         )
       } catch (e) {
         logger.error(e)
-        await this.reply('消息发送失败~请加Bot的好友或者私聊发送#锅巴登录')
+        await this.reply('发送失败，请加 Bot 好友，或私聊发送“#锅巴登录”')
       }
     } else {
       if (configured) {

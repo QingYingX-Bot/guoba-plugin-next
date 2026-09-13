@@ -58,7 +58,7 @@ export class GuobaWebShot extends plugin {
       decoded = decodeURIComponent(raw)
     } catch {}
     if (WebShot.IP_QUERY_RE.test(decoded)) {
-      await this.reply('查 IP 的页面就不截了哦~')
+      await this.reply('查 IP 的页面不截图')
       return true
     }
 
@@ -88,7 +88,7 @@ export class GuobaWebShot extends plugin {
     // 搜「我的ip」时百度会把本机 IP、归属地、运营商直接印在结果页顶部，
     // 而 baidu.com 是正常域名、域名黑名单拦不住 —— 所以这一步就掐掉，连搜都不搜
     if (WebShot.IP_QUERY_RE.test(searchKey || '')) {
-      await this.reply('查 IP 的就不截了哦~')
+      await this.reply('查 IP 的不截图')
       return true
     }
 
@@ -106,14 +106,14 @@ export class GuobaWebShot extends plugin {
   async replyError(err, url) {
     if (err.unworthy) {
       logger.mark(`[Guoba] 网页截图不发图(${err.kind}) ${url} ${err.message}`)
-      await this.reply(WebShot.UNWORTHY_TIP[err.kind] || '这个网页没截到有用的内容，就不发图了')
+      await this.reply(WebShot.UNWORTHY_TIP[err.kind] || '没截到有用内容，不发图')
       return
     }
     logger.error(`[Guoba] 网页截图失败 ${url}: `, err)
     if (/最终地址被拦截|ERR_BLOCKED_BY_CLIENT/.test(String(err.message))) {
-      await this.reply('这个网页会跳到内网地址，不解析哦')
+      await this.reply('跳到内网地址，不解析')
     } else {
-      await this.reply('截图失败了，网页可能打不开或加载超时')
+      await this.reply('截图失败，网页打不开或加载超时')
     }
   }
 }

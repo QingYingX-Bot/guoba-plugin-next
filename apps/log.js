@@ -59,7 +59,7 @@ export class GuobaLog extends plugin {
     } catch (err) {
       // autowired 是懒解析的代理，服务没起来时取属性就抛
       logger.debug(`[Guoba] 取日志失败：${err?.message}`)
-      return this.reply('锅巴服务似乎没有启动，取不到日志~')
+      return this.reply('锅巴服务没有启动，取不到日志')
     }
 
     /*

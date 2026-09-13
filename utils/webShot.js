@@ -95,7 +95,7 @@ export async function checkUrl(rawUrl, cfg) {
   try {
     url = new URL(rawUrl)
   } catch {
-    return {ok: false, reason: '链接格式不对哦'}
+    return {ok: false, reason: '链接格式不对'}
   }
 
   if (!['http:', 'https:'].includes(url.protocol)) {
@@ -105,16 +105,16 @@ export async function checkUrl(rawUrl, cfg) {
   const host = cleanHost(url.hostname)
 
   if (DOWNLOAD_EXT.test(url.pathname)) {
-    return {ok: false, reason: '这是下载链接，截不了图哦'}
+    return {ok: false, reason: '下载链接，不截图'}
   }
 
   const port = url.port || (url.protocol === 'https:' ? '443' : '80')
   if (DANGER_PORTS.includes(port)) {
-    return {ok: false, reason: '这个端口不像是网页，不解析'}
+    return {ok: false, reason: '这个端口不解析'}
   }
 
   if (IP_ECHO_HOSTS.some(h => host === h || host.endsWith('.' + h))) {
-    return {ok: false, reason: '这个网站会显示服务器 IP，不解析哦'}
+    return {ok: false, reason: '查 IP 的网站不解析'}
   }
 
   for (const b of (cfg.blacklist || [])) {
@@ -128,7 +128,7 @@ export async function checkUrl(rawUrl, cfg) {
 
   // 直接写的 IP 字面量
   if (net.isIP(host)) {
-    if (isPrivateIP(host)) return {ok: false, reason: '内网地址不解析，会暴露服务器信息'}
+    if (isPrivateIP(host)) return {ok: false, reason: '内网地址不解析'}
     return {ok: true, url: url.href}
   }
 
@@ -137,7 +137,7 @@ export async function checkUrl(rawUrl, cfg) {
     host === 'localhost' || host.endsWith('.localhost') ||
     host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.lan')
   ) {
-    return {ok: false, reason: '内网地址不解析，会暴露服务器信息'}
+    return {ok: false, reason: '内网地址不解析'}
   }
 
   // 解析一遍再看，防的是「域名指向内网」这种绕法
@@ -211,11 +211,11 @@ const QR_LOGIN_RE = /扫[一码].{0,6}登录|扫描.{0,8}登录|二维码.{0,4}�
 /** 不发图时给群里的说法 */
 export const UNWORTHY_TIP = {
   challenge: '这个网站要过人机验证，截不到内容',
-  login: '这个页面要登录才能看，就不发图了',
-  blocked: '这个网站不让截图，自己点开看看吧',
-  leak: '这个页面会显示服务器的网络信息，不发图哦',
-  error: '这个网页打不开，就不发图了',
-  empty: '这个页面没什么内容，就不发图了'
+  login: '需要登录，不发图',
+  blocked: '这个网站不让截图，自己点开看',
+  leak: '会显示服务器网络信息，不发图',
+  error: '网页打不开，不发图',
+  empty: '页面没什么内容，不发图'
 }
 
 /**
