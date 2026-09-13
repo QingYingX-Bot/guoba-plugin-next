@@ -129,7 +129,7 @@ export class GuobaUpdate extends plugin {
       return true
     } else {
       if (message) {
-        return this.reply(`[Guoba] 更新失败！\n${message}`)
+        return this.reply(`[Guoba] ${message}`)
       }
       logger.error(`[Guoba] 更新失败：`, {status, message})
       return this.reply(`[Guoba] 更新失败…… 请查看日志获取更多信息`)
@@ -285,11 +285,10 @@ export class GuobaUpdate extends plugin {
       }).trim()
     } catch {
       // 压根不在任何仓库里（云崽本体也不是 git 装的），同样没法更新
-      return '锅巴目录不是 git 仓库，无法通过 git 更新。请重新 clone 锅巴，或从备份里还原 .git 目录。'
+      return '锅巴目录不是 git 仓库，请重新 clone 锅巴，或从备份里还原 .git 目录。'
     }
     if (!top || path.resolve(top) !== path.resolve(_paths.pluginRoot)) {
-      return '锅巴目录缺少 .git，git 会往上找到云崽本体的仓库 —— 已中止更新，'
-        + `否则会把云崽（${top || '父目录仓库'}）连你的本地修改一起更新掉。\n`
+      return '锅巴目录缺少 .git，更新会连带改动云崽本体，已中止。\n'
         + '请重新 clone 锅巴，或从备份里还原 .git 目录。'
     }
     return ''
@@ -324,8 +323,8 @@ export class GuobaUpdate extends plugin {
       }
       exec(command, {cwd: _paths.pluginRoot}, function (error, stdout) {
         if (error) {
-          let message = 'Error code: ' + error.code + '\n' + error.stack + '\n 请稍后重试。'
-          resolve({status: _STATUS.FAIL, message})
+          logger.error('[Guoba] git 更新失败：', error)
+          resolve({status: _STATUS.FAIL, message: '更新失败，请稍后重试。'})
           return
         }
         if (/Already up[ -]to[ -]date/.test(stdout)) {
