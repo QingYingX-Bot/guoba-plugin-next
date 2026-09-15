@@ -156,7 +156,7 @@ function confirmRestart(type: 'guoba' | 'bot') {
 .g-about-hero {
   margin-bottom: 16px;
   background:
-    radial-gradient(circle at 90% 10%, rgba(209, 159, 86, 0.2), transparent 46%),
+    radial-gradient(circle at 90% 10%, var(--g-brand-glow), transparent 46%),
     var(--g-bg-card);
 }
 

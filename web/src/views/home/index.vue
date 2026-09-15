@@ -17,6 +17,7 @@ import {
   homeRandomImageUrl,
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { useBrandColor } from '@/theme/useBrandColor'
 import { GUOBA_VERSION, IS_V2, YUNZAI_VERSION } from '@/utils/env'
 import type { HomeData, MsgStat, SystemStatus } from '@/types'
 
@@ -26,6 +27,7 @@ const MSG_POLL_EVERY = 6
 
 const router = useRouter()
 const auth = useAuthStore()
+const { brand } = useBrandColor()
 
 const loading = ref(true)
 const home = ref<HomeData>({})
@@ -181,7 +183,7 @@ const stats = computed(() => [
     title: '公共 Cookie',
     value: home.value.cookieCount ?? 0,
     icon: 'ant-design:key-outlined',
-    color: '#d19f56',
+    color: brand.value,
   },
   {
     key: 'plugin',
@@ -241,7 +243,7 @@ onBeforeUnmount(() => {
             欢迎回到锅巴面板，这里可以管理 Yunzai 的配置、插件与账号。
           </p>
           <div class="g-hero-tags">
-            <Tag color="gold">锅巴 v{{ GUOBA_VERSION }}</Tag>
+            <Tag :color="brand">锅巴 v{{ GUOBA_VERSION }}</Tag>
             <Tag>Yunzai {{ YUNZAI_VERSION }}</Tag>
             <Tag v-if="IS_V2" color="orange">V2 兼容模式</Tag>
             <Tag color="blue" class="g-weather-tag" @click="openCityModal">
@@ -321,7 +323,7 @@ onBeforeUnmount(() => {
 .g-hero {
   margin-bottom: 16px;
   background:
-    radial-gradient(circle at 88% 12%, rgba(209, 159, 86, 0.22), transparent 45%),
+    radial-gradient(circle at 88% 12%, var(--g-brand-glow), transparent 45%),
     var(--g-bg-card);
   overflow: hidden;
 }

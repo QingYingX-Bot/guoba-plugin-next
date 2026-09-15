@@ -61,6 +61,22 @@ const PACKET_HELPER = '../../../../Packet-plugin/model/PacketHelper.js'
 const MAX_PROXY_URLS = 3000
 /** 昵称兜底缓存上限，超了挤掉最老的一半 */
 const MAX_SENDER_NAMES = 2000
+/** 群成员昵称缓存上限（按 群 : QQ 记，两个群各自的群名片不会串） */
+const MAX_MEMBER_NAMES = 5000
+/**
+ * 同一个群两次拉成员列表的最小间隔。
+ *
+ * 群里 @ 的人多半没发过言，缓存里没有，只能去问适配器。适配器那边取成员列表相对重，
+ * 而且失败时（协议端不支持、超时）没有缓存可依，不设间隔就变成每条带 @ 的消息都去拉一次。
+ */
+const MEMBER_FETCH_COOLDOWN = 60 * 1000
+/**
+ * 一次查不到后的重试间隔。
+ *
+ * 不能记成永久查不到：适配器的群成员列表是异步填的，消息到得比它早时第一次就问了个空；
+ * 反过来也不能每条消息都去问一遍，那会把适配器压死。两者之间取一个中间值。
+ */
+const MEMBER_MISS_TTL = 10 * 60 * 1000
 /** 戳一戳的动作名候选：OneBot v11 各家实现的叫法，逐个试 */
 const POKE_ACTIONS = ['send_poke', 'set_poke', 'send_group_poke', '_send_poke', 'poke']
 /** 代理单个文件的大小上限 */
@@ -160,6 +176,18 @@ export default class ChatService extends Service {
    */
   #names = new Map()
   /**
+   * `群号:QQ` -> 群名片（缺了用昵称）。
+   *
+   * 只为 @ 段服务：OneBot 的 at 段里那个 `name` 字段是可选的，NapCat / Lagrange 上报时
+   * 多数不给，页面上就只剩一串 QQ 号。群里发过言的人的昵称能从消息里顺手记下来，
+   * 但被 @ 的人常常一句话没说，得问适配器要群成员列表才拿得到名字。
+   */
+  #memberNames = new Map()
+  /** `群号:QQ` -> 上次没查到的时间戳，过了 MEMBER_MISS_TTL 再试一次 */
+  #memberMiss = new Map()
+  /** 群号 -> 上次去适配器拉成员列表的时间戳 */
+  #memberFetched = new Map()
+  /**
    * 自己发出去的图片留一份字节，段里只给 id。
    * 真实消息段自带 QQ 直链不用存，只有面板自己发的图是 base64，得留着才能回显。
    */
@@ -251,8 +279,12 @@ export default class ChatService extends Service {
     if (!botId || !id) return
 
     const segments = await normalizeMsg(e.message, {download: false})
+    // sender 先过一遍 —— 他会进 #names，下面补 @ 名字时就能用上
+    const sender = this.#sender(e.sender, e.user_id, botId)
+    // 补全 @ 段的昵称。放在 #push 之前，进缓冲的就是补齐过的段
+    if (segments.some((s) => s?.type === 'at')) await this.#resolveNames(segments, {botId, type, id})
     const messageId = e.message_id != null ? String(e.message_id) : ''
-    this.#push({
+    await this.#push({
       key: `${botId}:${type}:${id}`,
       botId,
       type,
@@ -261,7 +293,7 @@ export default class ChatService extends Service {
       messageSeq: this.#seqOf(e),
       time: Number(e.time) || Math.floor(Date.now() / 1000),
       self,
-      sender: this.#sender(e.sender, e.user_id, botId),
+      sender,
       segments,
     }, {unread: !self})
     // 事件里的原始数据比历史接口给的全（有上报原文），后来的以它为准
@@ -576,16 +608,8 @@ export default class ChatService extends Service {
     const card = String(sender?.card ?? '')
     const nickname = String(sender?.nickname ?? '')
     const name = card || nickname
-    if (name) {
-      this.#names.set(uin, name)
-      // 别让缓存无限涨，超了就把最老的一半挤掉
-      if (this.#names.size > MAX_SENDER_NAMES) {
-        for (const key of this.#names.keys()) {
-          this.#names.delete(key)
-          if (this.#names.size <= MAX_SENDER_NAMES / 2) break
-        }
-      }
-    }
+    // 记一份，给之后 @ 他、或别处缺昵称的消息兜底（满了自动挤掉最老的一半）
+    if (name) this.#rememberName(uin, name)
     // 有的实现上报不带昵称，兜底用之前见过的名字
     return {
       userId: uin,
@@ -606,13 +630,14 @@ export default class ChatService extends Service {
    * @param remember 段里的 http 直链要不要进代理白名单。只有适配器给的才算，
    *                 面板自己发出去的不算（Raw 档能自填 url，那等于放开任意地址代理）
    */
-  #push(msg, {unread = false, remember = true} = {}) {
+  async #push(msg, {unread = false, remember = true} = {}) {
     if (!msg.key) return null
     if (msg.messageId && this.#index.has(msg.messageId)) return this.#index.get(msg.messageId)
+    // 补全 @ 段的昵称。放在入缓冲之前，存下来的就是补齐过的段
+    if (remember) await this.#resolveNames(msg.segments, msg)
     msg.seq = this.#seq++
     this.#messages.push(msg)
     if (msg.messageId) this.#index.set(msg.messageId, msg)
-    if (remember) this.#remember(msg.segments)
     if (this.#messages.length > MAX_MESSAGES * 1.2) {
       // 攒够一批再裁，省得每条都挪一次数组
       const cut = this.#messages.splice(0, this.#messages.length - MAX_MESSAGES)
@@ -660,20 +685,147 @@ export default class ChatService extends Service {
     return name ? `${name}：${body}` : body
   }
 
-  /** 把段里的 http 直链记进代理白名单，跟缓冲一起淘汰 */
-  #remember(segments) {
-    for (const seg of segments ?? []) {
-      if (typeof seg?.url === 'string' && seg.url.startsWith('http')) {
-        // Set 保持插入序，超量时从最早的开始丢
-        if (this.#proxyUrls.size >= MAX_PROXY_URLS) {
-          const first = this.#proxyUrls.values().next().value
-          if (first !== undefined) this.#proxyUrls.delete(first)
+  /**
+   * 入库前的收尾：补全 @ 段的昵称，并把段里的 http 直链记进代理白名单。
+   * （白名单跟缓冲一起淘汰，原来单有一个 #remember 做这事，现在合成一趟走完）
+   */
+  async #resolveNames(segments, {botId, type, id} = {}, {remember = true} = {}) {
+    const groupId = type === 'group' ? String(id ?? '') : ''
+    /**
+     * 只有群消息才可能有要找的名字 —— 私聊没有成员列表这回事。
+     * 白名单那件事不跟它一起早退：一张图也不 @ 的消息（绝大多数）照样要登记 url。
+     */
+    const wantNames = !!groupId && segments?.some?.((s) => s?.type === 'at')
+    if (!wantNames && !remember) return
+    const cold = []
+
+    const walk = (list) => {
+      for (const seg of list ?? []) {
+        if (remember && typeof seg?.url === 'string' && seg.url.startsWith('http')) {
+          // Set 保持插入序，超量时从最早的开始丢
+          if (this.#proxyUrls.size >= MAX_PROXY_URLS) {
+            const first = this.#proxyUrls.values().next().value
+            if (first !== undefined) this.#proxyUrls.delete(first)
+          }
+          this.#proxyUrls.add(seg.url)
         }
-        this.#proxyUrls.add(seg.url)
+        if (seg?.type === 'at' && seg.qq) {
+          const uin = String(seg.qq)
+          /**
+           * 全局那份按 QQ 记名字，是给「同一个人在别处发过言」兜底的。
+           *
+           * 只在缓存里没有时才补：群名片跨群会串（同一个人在 A 群叫「张三」、B 群叫
+           * 「隔壁老王」），而这里的名字会跟着消息一起留在缓冲里，串了就一直是错的。
+           */
+          if (!seg.name) {
+            const name = groupId ? this.#memberNames.get(`${groupId}:${uin}`) : ''
+            if (name) seg.name = name
+            else if (groupId) cold.push(uin)
+          }
+        }
+        if (Array.isArray(seg?.nodes)) {
+          for (const node of seg.nodes) walk(node.segments)
+        }
       }
-      if (Array.isArray(seg?.nodes)) {
-        for (const node of seg.nodes) this.#remember(node.segments)
+    }
+    walk(segments)
+
+    // 群里 @ 的人多半没发过言，缓存里没有，去适配器要一次成员列表
+    if (cold.length) await this.#fillMemberNames(groupId, botId, [...new Set(cold)])
+  }
+
+  /** 把一次拿到的群成员灌进缓存；成员对象各家实现字段略有出入，两个名字都认 */
+  #cacheMembers(groupId, members) {
+    for (const info of members ?? []) {
+      const uin = String(info?.user_id ?? info?.userId ?? '')
+      if (!uin) continue
+      const name = String(info?.card || info?.nickname || info?.name || '').trim()
+      if (!name) continue
+      this.#memberNames.set(`${groupId}:${uin}`, name)
+      this.#rememberName(uin, name)
+    }
+    this.#trimMembers()
+  }
+
+  #trimMembers() {
+    // 顺手把过期的那批「没查到」清掉 —— 每次补名字都会走这儿，不必单开一个定时器
+    for (const [key, at] of this.#memberMiss) {
+      if (Date.now() - at < MEMBER_MISS_TTL) continue
+      this.#memberMiss.delete(key)
+    }
+    if (this.#memberNames.size <= MAX_MEMBER_NAMES) return
+    for (const key of this.#memberNames.keys()) {
+      this.#memberNames.delete(key)
+      if (this.#memberNames.size <= MAX_MEMBER_NAMES / 2) break
+    }
+  }
+
+  /** 这个组合刚查过、还没到重试时间 */
+  #missed(key) {
+    const at = this.#memberMiss.get(key)
+    if (at == null) return false
+    if (Date.now() - at >= MEMBER_MISS_TTL) {
+      this.#memberMiss.delete(key)
+      return false
+    }
+    return true
+  }
+
+  #markMissed(key) {
+    this.#memberMiss.set(key, Date.now())
+  }
+
+  /**
+   * 去适配器问这一批人的群名片。
+   *
+   * 两档：先要整个群的成员列表（多数适配器都实现了，一次问全，之后就都命中缓存了），
+   * 没这个能力才逐个查。同一个群有冷却，取不到时不至于每条带 @ 的消息都去拉一次。
+   */
+  async #fillMemberNames(groupId, botId, uins) {
+    const group = this.#pick('group', groupId, botId)
+    const fetched = this.#memberFetched.get(groupId) ?? 0
+
+    // 冷却期内不再问列表接口，直接让下面逐个查的那档去顶着
+    if (group && Date.now() - fetched >= MEMBER_FETCH_COOLDOWN) {
+      this.#memberFetched.set(groupId, Date.now())
+      try {
+        if (typeof group.getMemberMap !== 'function') throw new Error('适配器不支持取群成员列表')
+        const got = await group.getMemberMap()
+        this.#cacheMembers(groupId, got instanceof Map ? got.values() : got)
+      } catch (err) {
+        // 协议端没实现这个接口是常事，不是用户操作失败，日志记一条就够了
+        logger.debug(`[Guoba][消息记录] 取群 ${groupId} 成员列表失败：${err?.message ?? err}`)
       }
+    }
+
+    for (const uin of uins) {
+      const key = `${groupId}:${uin}`
+      if (this.#memberNames.has(key) || this.#missed(key)) continue
+      if (typeof group?.pickMember !== 'function') continue
+      try {
+        const member = group.pickMember(uin)
+        const info = typeof member?.getInfo === 'function' ? await member.getInfo() : member?.info
+        const name = String(info?.card || info?.nickname || info?.name || '').trim()
+        if (name) this.#memberNames.set(key, name)
+        else this.#markMissed(key)
+      } catch {
+        // 查不到先记一笔，隔一阵再试 —— 适配器的成员列表本身是异步填的，
+        // 第一次问可能还没有，判成永久查不到就再也补不上了
+        this.#markMissed(key)
+      }
+    }
+    this.#trimMembers()
+  }
+
+  /** 记一份 QQ -> 昵称，给「同一个人在别处发过言」兜底。满了挤掉最老的一半 */
+  #rememberName(uin, name) {
+    const id = String(uin ?? '')
+    if (!id || !name) return
+    this.#names.set(id, String(name))
+    if (this.#names.size <= MAX_SENDER_NAMES) return
+    for (const key of this.#names.keys()) {
+      this.#names.delete(key)
+      if (this.#names.size <= MAX_SENDER_NAMES / 2) break
     }
   }
 
@@ -868,7 +1020,7 @@ export default class ChatService extends Service {
     }
     // 各实现返回的顺序不一致，自己排一遍（旧 → 新）
     messages.sort((a, b) => (a.time - b.time) || String(a.messageSeq).localeCompare(String(b.messageSeq)))
-    for (const msg of messages) this.#remember(msg.segments)
+    for (const msg of messages) await this.#resolveNames(msg.segments, {botId, type, id})
 
     return {
       supported: true,
@@ -910,7 +1062,7 @@ export default class ChatService extends Service {
         segments: await normalizeMsg(content, {download: false}),
       })
     }
-    for (const node of nodes) this.#remember(node.segments)
+    for (const node of nodes) await this.#resolveNames(node.segments, {botId, type, id})
     return {nodes}
   }
 
@@ -1143,7 +1295,7 @@ export default class ChatService extends Service {
      * 所以在这儿主动补一条；真来了事件也会按 messageId 去重，不会重复。
      * 这条要读盘 —— 刚发的图是 base64，不留一份字节页面上就显示不出来。
      */
-    const pushed = this.#push({
+    const pushed = await this.#push({
       key: `${self}:${type === 'group' ? 'group' : 'friend'}:${id}`,
       botId: self,
       type: type === 'group' ? 'group' : 'friend',

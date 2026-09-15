@@ -22,13 +22,28 @@ body {
   background: var(--g-bg);
 }
 
-/* 主题变量：供自定义样式使用，antd 组件自身由 ConfigProvider 控制 */
+/* 主题变量：供自定义样式使用，antd 组件自身由 ConfigProvider 控制。
+   品牌色必须分主题给，不能放在 :root 里共用 —— 深色底下好看的暖金拿到浅色底上
+   对比度只有 2.2:1（正文要 4.5:1），而 --g-brand 有五十多处是当文字色用的
+   （磁盘百分比、快捷入口、链接、终端提示…），小字会糊成一团。
+   下面这份只是没有 data-theme 时的兜底，实际由两个主题块各自覆盖 */
 :root {
   --g-brand: #d19f56;
   --g-brand-soft: rgba(209, 159, 86, 0.14);
 }
 
 html[data-theme='dark'] {
+  /* 墨蓝底 + 暖金 */
+  --g-brand: #d19f56;
+  --g-brand-soft: rgba(209, 159, 86, 0.14);
+  /* 品牌色实心块上的文字（头像、主按钮） */
+  --g-brand-fg: #1a1408;
+  --g-brand-line: rgba(209, 159, 86, 0.28);
+  /* 卡片角上那两团光晕，浓的一层 + 淡的一层 */
+  --g-brand-glow: rgba(209, 159, 86, 0.22);
+  --g-brand-glow-2: rgba(209, 159, 86, 0.1);
+  --g-brand-shadow: 0 6px 16px rgba(209, 159, 86, 0.26);
+
   --g-bg: #0d1017;
   --g-bg-card: #181c25;
   --g-bg-elevated: #1e2430;
@@ -61,16 +76,26 @@ html[data-theme='dark'] {
 }
 
 html[data-theme='light'] {
-  --g-bg: #f4f6fa;
-  --g-bg-card: #ffffff;
-  --g-bg-elevated: #ffffff;
-  --g-bg-soft: #f5f7fa;
-  --g-border: #e2e6ee;
-  --g-danger: #d9614c;
-  --g-text: rgba(0, 0, 0, 0.88);
-  --g-text-sub: rgba(0, 0, 0, 0.6);
-  --g-text-dim: rgba(0, 0, 0, 0.4);
-  --g-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+  /* 暖米白底 + 灰绿点缀。灰绿在米白上对比度 4.7:1，当小字也读得清；
+     暖金留给深色主题，白底上它只有 2.2:1 */
+  --g-brand: #5f7a6b;
+  --g-brand-soft: rgba(95, 122, 107, 0.12);
+  --g-brand-fg: #ffffff;
+  --g-brand-line: rgba(95, 122, 107, 0.26);
+  --g-brand-glow: rgba(95, 122, 107, 0.14);
+  --g-brand-glow-2: rgba(95, 122, 107, 0.07);
+  --g-brand-shadow: 0 6px 16px rgba(95, 122, 107, 0.22);
+
+  --g-bg: #f5f3ec;
+  --g-bg-card: #fbfaf6;
+  --g-bg-elevated: #fdfcf9;
+  --g-bg-soft: #f0ede4;
+  --g-border: #e3ded1;
+  --g-danger: #c0503c;
+  --g-text: #35322c;
+  --g-text-sub: #6b665c;
+  --g-text-dim: #9a948a;
+  --g-shadow: 0 4px 16px rgba(74, 68, 54, 0.08);
   color-scheme: light;
 
   /* 同一套色相压暗，终端原色在白底上（尤其黄、绿、青）根本看不清 */

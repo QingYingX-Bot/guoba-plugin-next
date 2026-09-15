@@ -1,0 +1,1 @@
+import{xt as e}from"./antd-G-PXGI47.js";import{a as t,o as n,s as r}from"./index-6tcxR0Ln.js";function i(){let i=r();return{brand:e(()=>i.isDark?t:n)}}export{i as t};

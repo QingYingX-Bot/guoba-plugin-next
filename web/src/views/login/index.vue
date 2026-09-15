@@ -233,8 +233,8 @@ html[data-theme='dark'] .g-login {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 16% 18%, rgba(209, 159, 86, 0.16), transparent 42%),
-    radial-gradient(circle at 84% 82%, rgba(209, 159, 86, 0.1), transparent 45%);
+    radial-gradient(circle at 16% 18%, var(--g-brand-glow), transparent 42%),
+    radial-gradient(circle at 84% 82%, var(--g-brand-glow-2), transparent 45%);
 }
 
 .g-login-card {
@@ -276,7 +276,7 @@ html[data-theme='dark'] .g-login {
   height: 58px;
   margin-bottom: 14px;
   background: var(--g-brand-soft);
-  border: 1px solid rgba(209, 159, 86, 0.28);
+  border: 1px solid var(--g-brand-line);
   border-radius: 16px;
 }
 
@@ -309,9 +309,9 @@ footer {
 :deep(.ant-btn-primary) {
   margin-top: 14px;
   font-weight: 500;
-  box-shadow: 0 6px 16px rgba(209, 159, 86, 0.26);
+  box-shadow: var(--g-brand-shadow);
 }
-:deep(.ant-btn-primary:hover) { box-shadow: 0 8px 20px rgba(209, 159, 86, 0.32); }
+:deep(.ant-btn-primary:hover) { box-shadow: var(--g-brand-shadow-hover); }
 
 @media (max-width: 480px) {
   .g-login { padding: 14px; }

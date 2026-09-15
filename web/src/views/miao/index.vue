@@ -6,6 +6,7 @@ import HelpListPanel from './components/HelpListPanel.vue'
 import ThemePanel from './components/ThemePanel.vue'
 import BackupPanel from './components/BackupPanel.vue'
 import { apiGetMiaoHelpCfg, apiSaveMiaoHelpCfg } from '@/api'
+import { useBrandColor } from '@/theme/useBrandColor'
 import type { MiaoHelpCfgBody, MiaoHelpGroup } from '@/types'
 
 /**
@@ -17,6 +18,8 @@ import type { MiaoHelpCfgBody, MiaoHelpGroup } from '@/types'
  *   icon     → FormData 里的文件，可选
  * 所以整页共用一次提交，四个面板的保存按钮都走 save()。
  */
+const { brand } = useBrandColor()
+
 const loading = ref(true)
 /** 路由存在但接口 404，说明没装 miao-plugin */
 const notInstalled = ref(false)
@@ -111,7 +114,7 @@ onMounted(load)
 
     <template v-else>
       <Space class="g-miao-meta" :size="6" wrap>
-        <Tag v-if="miaoVersion" color="#d19f56">喵喵 {{ miaoVersion }}</Tag>
+        <Tag v-if="miaoVersion" :color="brand">喵喵 {{ miaoVersion }}</Tag>
         <Tag v-if="yunzaiVersion">Yunzai {{ yunzaiVersion }}</Tag>
         <Tag>{{ helpList.length }} 个分组 / {{ itemCount }} 条命令</Tag>
       </Space>
