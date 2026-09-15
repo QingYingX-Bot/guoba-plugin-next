@@ -232,7 +232,7 @@ export function supportGuoba () {
           field: 'webShot.skipUnworthy',
           label: '跳过没内容的页面',
           helpMessage: '只发能看到页面内容的图',
-          bottomHelpMessage: '要过人机验证的、要登录才能看的、打不开报错的、整页空白的，都不发图',
+          bottomHelpMessage: '要过人机验证的、要登录才能看的、打不开报错的、整页空白的，都不发图也不回话',
           component: 'Switch'
         },
         {
