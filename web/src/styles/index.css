@@ -36,6 +36,8 @@ html[data-theme='dark'] {
   /* 墨蓝底 + 暖金 */
   --g-brand: #d19f56;
   --g-brand-soft: rgba(209, 159, 86, 0.14);
+  /* 比上面那个再亮一档，给「要靠颜色分主次」的地方（如文件名的文件夹），亮底上才压得住 */
+  --g-brand-ink: #e8bd7d;
   /* 品牌色实心块上的文字（头像、主按钮） */
   --g-brand-fg: #1a1408;
   --g-brand-line: rgba(209, 159, 86, 0.28);
@@ -80,6 +82,8 @@ html[data-theme='light'] {
      暖金留给深色主题，白底上它只有 2.2:1 */
   --g-brand: #5f7a6b;
   --g-brand-soft: rgba(95, 122, 107, 0.12);
+  /* 比正文（#35322c）更沉一档：文件夹名要一眼比单文件重，光靠色相不够，得压深 */
+  --g-brand-ink: #3d5a4a;
   --g-brand-fg: #ffffff;
   --g-brand-line: rgba(95, 122, 107, 0.26);
   --g-brand-glow: rgba(95, 122, 107, 0.14);

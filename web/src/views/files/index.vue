@@ -621,7 +621,8 @@ onMounted(load)
 }
 
 .g-files-crumb-btn.is-root {
-  color: var(--g-brand);
+  /* 跟上面的文件夹名用同一个色，面包屑和列表看着才是一套 */
+  color: var(--g-brand-ink);
   font-weight: 500;
 }
 
@@ -647,9 +648,20 @@ onMounted(load)
   font-size: 13px;
 }
 
+/**
+ * 文件夹与单文件必须一眼分清，但两个都是低饱和的深色系，**只调颜色没有用** ——
+ * 实测并排放着看就是「差不多」（文件夹 #3d5a4a / 文件 #35322c，色相差一点点）。
+ * 所以改用「形状」拉开：文件夹垫一层浅色底片，一眼就能扫出来。
+ */
 .g-files-name.is-dir {
   cursor: pointer;
-  color: var(--g-brand);
+  color: var(--g-brand-ink);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--g-brand-soft);
+  /* 底片自带左内边距，抵消掉才能跟下面文件名左对齐 */
+  margin-left: -8px;
 }
 
 .g-files-name:not(.is-dir) {
