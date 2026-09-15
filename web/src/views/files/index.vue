@@ -462,7 +462,11 @@ onMounted(load)
             :title="record.isDir ? '进入文件夹' : '单击预览'"
             @click="onOpen(record)"
           >
-            <GIcon :icon="record.isDir ? 'ant-design:folder-outlined' : 'ant-design:file-outlined'" :size="15" />
+            <GIcon
+              :icon="record.isDir ? 'ant-design:folder-outlined' : 'ant-design:file-outlined'"
+              :color="record.isDir ? 'var(--g-brand-ink)' : 'var(--g-text-dim)'"
+              :size="15"
+            />
             <span>{{ record.name }}</span>
           </span>
         </template>
@@ -649,19 +653,17 @@ onMounted(load)
 }
 
 /**
- * 文件夹与单文件必须一眼分清，但两个都是低饱和的深色系，**只调颜色没有用** ——
- * 实测并排放着看就是「差不多」（文件夹 #3d5a4a / 文件 #35322c，色相差一点点）。
- * 所以改用「形状」拉开：文件夹垫一层浅色底片，一眼就能扫出来。
+ * 文件夹与单文件必须一眼分清。
+ *
+ * 试过「只调文字色」和「给名字垫底片」两条路，都不行：前者两个都是低饱和深色，并排放着
+ * 实测看不出差别；后者一排灰色药丸连成串，又俗又占地方。
+ * 最后落在**图标**上 —— 图标在模板里直接给颜色（文件压淡、文件夹上色），
+ * 扫一眼先看到图标，不用读名字就能分出哪边是文件夹。
  */
 .g-files-name.is-dir {
   cursor: pointer;
   color: var(--g-brand-ink);
   font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--g-brand-soft);
-  /* 底片自带左内边距，抵消掉才能跟下面文件名左对齐 */
-  margin-left: -8px;
 }
 
 .g-files-name:not(.is-dir) {
