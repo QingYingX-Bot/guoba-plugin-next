@@ -57,13 +57,15 @@ export default class GitTools {
   async init() {
     // logger.debug(`[Guoba] 开始执行 "${this.name}" 仓库的初始化操作： ${this.directory} `)
 
-    // 环境里没有 git（常见于未装 git 的 Windows / 精简容器，如柠檬崽 AlemonX）：
-    // 这俩仓库是可选资源，缺了不影响锅巴主体，静默降级成一条提示，别刷红也别抛异常。
+    // 当前进程调不起 git：可能真没装，也可能是启动器/框架拉起子进程时没继承到完整 PATH
+    // （典型：AlemonX 等把 Yunzai 跑成子进程，连 System32 里的 chcp/netstat 都一起调不起来，
+    //  这时 git 其实装了、只是 PATH 里没有）。这俩仓库是可选资源，缺了不影响锅巴主体，
+    // 静默降级成一条提示，别刷红也别抛异常。
     if (!(await GitTools.isGitAvailable())) {
       this.repoIsError = true
       if (!GitTools._gitMissingWarned) {
         GitTools._gitMissingWarned = true
-        const tip = `[Guoba] 未检测到 git，已跳过资源仓库(插件索引/资源库)的下载与更新。插件索引、备份还原等依赖 git 的功能将不可用；如需使用请先安装 git 并重启。`
+        const tip = `[Guoba] 当前环境调不起 git，已跳过资源仓库(插件索引/资源库)的下载与更新，插件索引/备份还原等功能暂不可用。若已装 git 仍报此提示，多为运行进程的 PATH 未包含 git（常见于用启动器/框架把 Yunzai 跑成子进程）；否则请安装 git。修好后重启生效。`
         if (typeof logger !== 'undefined') logger.warn(tip)
         else console.warn(tip)
       }
