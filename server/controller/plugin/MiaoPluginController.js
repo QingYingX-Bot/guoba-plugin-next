@@ -1,4 +1,4 @@
-import {autowired, Result} from '#guoba.framework';
+import {autowired, GuobaError, Result} from '#guoba.framework';
 import {ApiController, PluginsMap} from '#guoba.platform'
 
 export default class MiaoPluginController extends ApiController {
@@ -28,6 +28,8 @@ export default class MiaoPluginController extends ApiController {
     this.get('/help', this.getMiaoHelpCfg)
     // 设置喵喵帮助 cfg
     this.post('/help', this.saveMiaoHelpCfg)
+    // 用编辑器里的草稿出一张预览图（不保存、不发送）
+    this.post('/help/preview', this.previewMiaoHelp)
     // 获取喵喵帮助背景图片
     this.get('/help/theme/bg', this.getHelpThemeBg)
     this.get('/help/theme/main', this.getHelpThemeMain)
@@ -67,6 +69,15 @@ export default class MiaoPluginController extends ApiController {
   async saveMiaoHelpCfg(req) {
     this.miaoService.saveHelpSetting(req.body, req.files)
     return Result.ok(null, '保存成功~')
+  }
+
+  async previewMiaoHelp(req) {
+    // 老版本喵喵（v1）的服务实现里没有预览，给一句人话而不是 undefined is not a function
+    if (typeof this.miaoService.renderHelpPreview !== 'function') {
+      throw new GuobaError('当前版本的喵喵插件暂不支持编辑预览')
+    }
+    let image = await this.miaoService.renderHelpPreview(req.body)
+    return Result.ok({image})
   }
 
   getHelpThemeBg(req, res) {

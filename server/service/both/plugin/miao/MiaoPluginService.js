@@ -1,10 +1,11 @@
 import fs from 'fs'
 import path from 'path'
+import {pathToFileURL} from 'url'
 import lodash from 'lodash'
 import moment from 'moment'
 import {GuobaError} from "#guoba.framework";
 import {_paths} from '#guoba.platform'
-import {moveFile} from '#guoba.utils'
+import {getRenderer, moveFile} from '#guoba.utils'
 
 const {GID} = Guoba.createImport(import.meta.url)
 const IMiaoPluginService = await GID('./IMiaoPluginService.js')
@@ -101,6 +102,153 @@ export default class MiaoPluginService extends IMiaoPluginService {
     let helpList = diyCfg.helpList || custom.helpList || sysCfg.helpList
     let themeNames = this.getThemeNames()
     return {helpCfg, helpList, themeNames}
+  }
+
+  /** Yunzai Runtime 类缓存 */
+  _yunzaiRuntimeClass = undefined
+
+  /**
+   * 取 Yunzai 的 Runtime 类。
+   *
+   * 预览复用喵喵自己的出图链路（runtime.render → beforeRender → puppeteer），
+   * 布局、缩放、资源路径才和群里那张图一字不差。Runtime 构造只存 e，不依赖真实消息事件；
+   * 主进程已经按同一 URL 加载过这个模块，再 import 拿到的是同一份，不会重复求值。
+   */
+  async getYunzaiRuntimeClass() {
+    if (this._yunzaiRuntimeClass) {
+      return this._yunzaiRuntimeClass
+    }
+    let file = path.join(_paths.root, 'lib/plugins/runtime.js')
+    let mod = await import(pathToFileURL(file).href)
+    return (this._yunzaiRuntimeClass = mod.default)
+  }
+
+  /** 解析前端传来的草稿 JSON，坏数据不让预览整个挂掉 */
+  parseDraftJson(raw, fallback) {
+    if (typeof raw !== 'string' || !raw.trim()) {
+      return fallback
+    }
+    try {
+      let parsed = JSON.parse(raw)
+      return parsed ?? fallback
+    } catch (e) {
+      throw new GuobaError('草稿格式有误，无法生成预览')
+    }
+  }
+
+  /**
+   * 用编辑器的草稿出一张预览图（不落盘、不发消息）。
+   *
+   * 渲染完全走喵喵那一套：模板、皮肤、缩放、分栏都由它自己决定，这里只把
+   * 「要渲染的内容」从磁盘上的 config/help.js 换成传进来的草稿。用 retType=base64
+   * 直接拿图，所以 e 只需要挂个 runtime，图不会进任何聊天。
+   *
+   * @param bodyParams {{helpCfg?: string, helpList?: string}} 前端传来的 JSON 字符串
+   * @return {Promise<any>} 处理好的图片数据
+   */
+  async renderHelpPreview(bodyParams) {
+    let {helpCfg: cfgRaw, helpList: listRaw} = (bodyParams || {})
+    let draftCfg = this.parseDraftJson(cfgRaw, {})
+    let draftList = this.parseDraftJson(listRaw, [])
+    if (!Array.isArray(draftList) || draftList.length === 0) {
+      throw new GuobaError('帮助列表还是空的，先加几条命令再预览')
+    }
+
+    let renderer = await getRenderer()
+    if (!renderer) {
+      throw new GuobaError('当前环境没有可用的图片渲染器，无法生成预览')
+    }
+
+    let {Data} = await this.getMiaoUtils()
+    let {sysCfg} = await Data.importCfg('help')
+
+    // 与 Help.render 一致：草稿 → 系统配置兜底，再补喵喵自身缺省的那两项
+    let helpConfig = lodash.defaults(
+      {...draftCfg},
+      sysCfg.helpCfg,
+      {colCount: 3, bgBlur: true},
+    )
+
+    // 与 Help.render 一致：把 icon 序号换算成雪碧图偏移，0 表示这条不显示图标
+    let helpGroup = []
+    lodash.forEach(draftList, (group) => {
+      lodash.forEach(group?.list, (item) => {
+        let icon = item.icon * 1
+        if (!icon) {
+          item.css = 'display:none'
+        } else {
+          let x = (icon - 1) % 10
+          let y = (icon - x - 1) / 10
+          item.css = `background-position:-${x * 50}px -${y * 50}px`
+        }
+      })
+      helpGroup.push(group)
+    })
+
+    let HelpTheme = (await this.importMiao([
+      '../../../../../../miao-plugin/apps/help/HelpTheme.js',
+    ])).default
+    let themeData = await HelpTheme.getThemeData(draftCfg, sysCfg.helpCfg || {})
+
+    let MiaoRender = (await this.importMiao([
+      '../../../../../../miao-plugin/components/common/Render.js',
+    ])).default
+    let Runtime = await this.getYunzaiRuntimeClass()
+
+    let img
+    try {
+      img = await MiaoRender.render('help/index', {
+        helpCfg: helpConfig,
+        helpGroup,
+        ...themeData,
+        element: 'default',
+        // 独立的 html 文件名。宿主渲染是「先写 temp/html 再截图」，跟群聊里的 #帮助
+        // 共用名字的话两边并发会互相覆盖，谁后写谁的内容就跑到别人图里。
+        // 只改文件名、不改目录层级，所以 _res_path 那套相对路径不受影响
+        saveId: 'help-preview',
+      }, {e: {runtime: new Runtime({})}, scale: 1.2, retType: 'base64'})
+    } catch (err) {
+      logger.error('[Guoba] 喵喵帮助预览出图失败')
+      logger.error(err)
+      throw new GuobaError('预览生成失败，请查看后台日志')
+    }
+    let dataUrl = this.toImageDataUrl(img)
+    if (!dataUrl) {
+      throw new GuobaError('预览生成失败，请查看后台日志')
+    }
+    return dataUrl
+  }
+
+  /**
+   * 把出图结果转成 dataURL，方便前端直接塞进 <img>。
+   *
+   * puppeteer.screenshot 返回的是 segment.image 包装过的东西，各家宿主形态不一
+   * （base64 串、`base64://` 前缀、Buffer、带 file 字段的对象），这里只做宽容归一，
+   * 认不出来就返回空串让调用方当失败处理 —— 绝不猜格式硬转。
+   */
+  toImageDataUrl(img) {
+    if (!img) {
+      return ''
+    }
+    let raw = img
+    if (typeof raw === 'object' && !Buffer.isBuffer(raw)) {
+      raw = raw.file ?? raw.data ?? raw.buffer
+    }
+    if (Buffer.isBuffer(raw)) {
+      return `data:image/jpeg;base64,${raw.toString('base64')}`
+    }
+    if (typeof raw === 'string') {
+      let text = raw.trim()
+      if (text.startsWith('data:')) {
+        return text
+      }
+      text = text.replace(/^base64:\/\//, '').replace(/\s/g, '')
+      // 纯 base64 串才认：长度够、字符集干净
+      if (text.length > 100 && /^[A-Za-z0-9+/=]+$/.test(text)) {
+        return `data:image/jpeg;base64,${text}`
+      }
+    }
+    return ''
   }
 
   getThemeNames() {

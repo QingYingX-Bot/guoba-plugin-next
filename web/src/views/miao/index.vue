@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Alert, Result, Skeleton, Tag } from 'ant-design-vue'
 import HelpCfgPanel from './components/HelpCfgPanel.vue'
 import HelpListPanel from './components/HelpListPanel.vue'
+import HelpPreviewPanel from './components/HelpPreviewPanel.vue'
 import ThemePanel from './components/ThemePanel.vue'
 import BackupPanel from './components/BackupPanel.vue'
 import { apiGetMiaoHelpCfg, apiSaveMiaoHelpCfg } from '@/api'
@@ -133,6 +134,8 @@ onMounted(load)
         @save="save"
         @update:list="helpList = $event"
       />
+
+      <HelpPreviewPanel :cfg="helpCfg" :list="helpList" />
 
       <ThemePanel @changed="load" />
 

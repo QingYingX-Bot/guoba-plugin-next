@@ -1,6 +1,6 @@
 import { del, get, post } from './request'
 import { API_BASE } from '@/utils/env'
-import type { MiaoBackupItem, MiaoHelpCfg, MiaoThemeItem } from '@/types'
+import type { MiaoBackupItem, MiaoHelpCfg, MiaoHelpCfgBody, MiaoHelpGroup, MiaoThemeItem } from '@/types'
 
 /**
  * 喵喵插件相关接口，见 server/controller/plugin/MiaoPluginController.js。
@@ -23,6 +23,23 @@ export const apiGetMiaoHelpCfg = () =>
  */
 export const apiSaveMiaoHelpCfg = (formData: FormData) =>
   post('/plugin/miao/help', formData, { showSuccess: true })
+
+/**
+ * 用编辑器的草稿出一张预览图。
+ *
+ * 只渲染、不保存、不发消息；返回的 dataURL 可直接塞进 <img>。
+ * 后端拿的是当前草稿（不是磁盘上已保存的配置），所以改完不用先保存就能看效果。
+ * 出图要走 puppeteer，比较慢，失败信息由面板自己显示，不弹全局提示。
+ */
+export const apiPreviewMiaoHelp = (helpCfg: MiaoHelpCfgBody, helpList: MiaoHelpGroup[]) =>
+  post<{ image: string }>(
+    '/plugin/miao/help/preview',
+    {
+      helpCfg: JSON.stringify(helpCfg),
+      helpList: JSON.stringify(helpList),
+    },
+    { showError: false },
+  )
 
 export const apiGetMiaoThemeList = () => get<MiaoThemeItem[]>('/plugin/miao/help/theme/list')
 
