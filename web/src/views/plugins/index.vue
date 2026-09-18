@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAppStore } from '@/stores/app'
 import {
   Alert,
   Badge,
@@ -34,6 +35,7 @@ import { sinceText } from './gitText'
 import type { PluginItem } from '@/types'
 
 const router = useRouter()
+const appStore = useAppStore()
 
 const loading = ref(true)
 const refreshing = ref(false)
@@ -223,29 +225,59 @@ onMounted(() => {
         </template>
       </Input>
 
-      <Segmented v-model:value="filter" :options="filterOptions" />
+      <!-- PC：保持原布局（筛选段 + 四个按钮聚在右边一行） -->
+      <template v-if="!appStore.isMobile">
+        <Segmented v-model:value="filter" :options="filterOptions" />
+        <div class="g-toolbar-actions">
+          <Tooltip title="强制刷新远程插件列表">
+            <Button :loading="refreshing" @click="load(true)">
+              <GIcon icon="ant-design:reload-outlined" :size="13" />
+            </Button>
+          </Tooltip>
+          <Tooltip title="逐个 git fetch，看每个插件落后几个提交">
+            <Button @click="updatePanel?.startCheck()">
+              <GIcon icon="ant-design:sync-outlined" :size="13" />
+              <span class="g-btn-text">检查更新</span>
+            </Button>
+          </Tooltip>
+          <Button v-if="updatable.length" type="primary" @click="updatePanel?.openUpdate()">
+            <GIcon icon="ant-design:cloud-sync-outlined" :size="14" />
+            <span class="g-btn-text">更新 {{ updatable.length }} 个插件</span>
+          </Button>
+          <Button type="primary" @click="installOpen = true">
+            <GIcon icon="ant-design:cloud-download-outlined" :size="14" />
+            <span class="g-btn-text">安装插件</span>
+          </Button>
+        </div>
+      </template>
 
-      <Space class="g-toolbar-actions">
-        <Tooltip title="强制刷新远程插件列表">
-          <Button :loading="refreshing" @click="load(true)">
-            <GIcon icon="ant-design:reload-outlined" :size="13" />
+      <!-- 手机：筛选段 + 刷新图标一行；检查更新 / 更新N个 / 安装插件 平分下面一行 -->
+      <template v-else>
+        <div class="g-toolbar-filter">
+          <Segmented v-model:value="filter" :options="filterOptions" />
+          <Tooltip title="强制刷新远程插件列表">
+            <Button :loading="refreshing" class="g-toolbar-refresh" @click="load(true)">
+              <GIcon icon="ant-design:reload-outlined" :size="13" />
+            </Button>
+          </Tooltip>
+        </div>
+        <div class="g-toolbar-actions">
+          <Tooltip title="逐个 git fetch，看每个插件落后几个提交">
+            <Button @click="updatePanel?.startCheck()">
+              <GIcon icon="ant-design:sync-outlined" :size="13" />
+              <span class="g-btn-text">检查更新</span>
+            </Button>
+          </Tooltip>
+          <Button v-if="updatable.length" type="primary" @click="updatePanel?.openUpdate()">
+            <GIcon icon="ant-design:cloud-sync-outlined" :size="14" />
+            <span class="g-btn-text">更新 {{ updatable.length }} 个</span>
           </Button>
-        </Tooltip>
-        <Tooltip title="逐个 git fetch，看每个插件落后几个提交">
-          <Button @click="updatePanel?.startCheck()">
-            <GIcon icon="ant-design:sync-outlined" :size="13" />
-            <span class="g-btn-text">检查更新</span>
+          <Button type="primary" @click="installOpen = true">
+            <GIcon icon="ant-design:cloud-download-outlined" :size="14" />
+            <span class="g-btn-text">安装插件</span>
           </Button>
-        </Tooltip>
-        <Button v-if="updatable.length" type="primary" @click="updatePanel?.openUpdate()">
-          <GIcon icon="ant-design:cloud-sync-outlined" :size="14" />
-          <span class="g-btn-text">更新 {{ updatable.length }} 个插件</span>
-        </Button>
-        <Button type="primary" @click="installOpen = true">
-          <GIcon icon="ant-design:cloud-download-outlined" :size="14" />
-          <span class="g-btn-text">安装插件</span>
-        </Button>
-      </Space>
+        </div>
+      </template>
     </div>
 
     <Row v-if="loading" :gutter="[16, 16]">
@@ -310,8 +342,10 @@ onMounted(() => {
           </div>
 
           <div class="g-plugin-actions">
-            <!-- 按钮最多能凑到 5 个（配置 / 更新 / 日志 / 卸载 / 仓库），手机上要能换行 -->
-            <Space :size="6" wrap>
+            <!-- 按钮最多能凑到 5 个（配置 / 更新 / 日志 / 卸载 / 仓库），手机上要能换行。
+                 用普通 flex 而非 ant Space：Space 开 wrap 会塞内联 margin-bottom:-6px 做行距，
+                 换行后两排按钮会叠在一起 -->
+            <div class="g-plugin-btns">
               <Button
                 v-if="p.hasConfig"
                 type="primary"
@@ -355,7 +389,7 @@ onMounted(() => {
               <Button v-if="p.link" size="small" type="text" @click="openLink(p.link)">
                 <GIcon icon="ant-design:github-outlined" :size="14" />
               </Button>
-            </Space>
+            </div>
           </div>
         </Card>
       </Col>
@@ -465,8 +499,48 @@ onMounted(() => {
   width: 260px;
 }
 
+.g-toolbar-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .g-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-left: auto;
+}
+
+/* 手机：搜索框整行；筛选段 + 安装插件一行（安装按钮靠右填空位）；
+   刷新/检查更新/更新N个 三个并到下面一行 */
+@media (max-width: 768px) {
+  .g-toolbar-search {
+    width: 100%;
+  }
+  .g-toolbar-filter {
+    width: 100%;
+    flex-wrap: nowrap;
+  }
+  /* Segmented 5 个选项占满宽度，让它可压缩+横滑，右边贴刷新图标 */
+  .g-toolbar-filter :deep(.ant-segmented) {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+  }
+  .g-toolbar-refresh {
+    flex-shrink: 0;
+  }
+  .g-toolbar-actions {
+    width: 100%;
+    margin-left: 0;
+    flex-wrap: nowrap;
+  }
+  /* 三个按钮平分整行、并成一行；不裁字（文案已在手机上缩短） */
+  .g-toolbar-actions > * {
+    flex: 1;
+  }
 }
 
 .g-btn-text {
@@ -535,7 +609,17 @@ onMounted(() => {
 }
 
 .g-plugin-actions {
+  /* margin-top:auto 只在卡片有余白时才撑出间距；卡片被内容填满时按钮会贴上面的文案，
+     补一条 padding-top 保证跟提交/标签行之间始终有呼吸 */
   margin-top: auto;
+  padding-top: 12px;
+}
+
+/* 按钮排：普通 flex + gap，换行也不会像 ant Space 那样负边距叠行 */
+.g-plugin-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .g-install-alert {
