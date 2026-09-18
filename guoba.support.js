@@ -26,7 +26,7 @@ export function supportGuoba () {
         'https://github.com/guoba-yunzai'
       ],
       // 仓库地址
-      link: 'https://github.com/guoba-yunzai/guoba-plugin',
+      link: 'https://github.com/cchanlan/guoba-plugin-next',
       isV3: true,
       isV2: false,
       // 是否显示在左侧菜单，可选值：auto、true、false
