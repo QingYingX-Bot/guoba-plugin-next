@@ -1,8 +1,13 @@
 import {cfg} from "#guoba.platform";
 import {getMasterBotIds, isFakeAccount, sendToBotMaster} from '#guoba.utils'
 
-// 账号刚连上时好友列表等信息可能还没同步完，等一会儿再发
-const GUIDE_DELAY = 10000
+// 账号刚连上时好友列表等信息可能还没同步完，等一会儿再发。
+// 部分协议端（如 SnowLuma 等 OneBot 端）首次给某个好友发私聊要先解析 uid、建 c2c 会话，
+// 冷启动那会儿好友缓存没热，这一步会慢过桥接层的接口超时 —— 所以留足缓冲并配合重试。
+const GUIDE_DELAY = 15000
+// 引导发送失败后的重试：总共尝试 GUIDE_RETRY_TIMES 次，每次间隔 GUIDE_RETRY_DELAY
+const GUIDE_RETRY_TIMES = 3
+const GUIDE_RETRY_DELAY = 15000
 
 const GUIDE_MESSAGE = [
   '欢迎使用锅巴插件~',
@@ -121,17 +126,24 @@ export class GuobaHelp extends plugin {
   }
 
   async sendGuide(botId) {
-    // 等待期间可能已经在面板里关掉了引导
-    if (!cfg.get('base.guide')) {
-      return
+    for (let attempt = 1; attempt <= GUIDE_RETRY_TIMES; attempt++) {
+      // 每次发送前都确认：等待期间可能已经在面板里关掉了引导
+      if (!cfg.get('base.guide')) {
+        return
+      }
+      const success = await sendToBotMaster(botId, GUIDE_MESSAGE)
+      if (success > 0) {
+        cfg.set('base.guide', false)
+        return
+      }
+      // 首次失败多半是协议端好友缓存没热 / c2c 会话没建，等一会儿会话就绪了再试
+      if (attempt < GUIDE_RETRY_TIMES) {
+        logger.mark(`[Guoba] 首次安装引导发送失败，${GUIDE_RETRY_DELAY / 1000}秒后重试（${attempt}/${GUIDE_RETRY_TIMES - 1}）`)
+        await new Promise(resolve => setTimeout(resolve, GUIDE_RETRY_DELAY))
+      }
     }
-    const success = await sendToBotMaster(botId, GUIDE_MESSAGE)
-    if (success > 0) {
-      cfg.set('base.guide', false)
-    } else {
-      // 没发出去就留着标记，下次启动重试，免得引导直接丢失
-      logger.warn('[Guoba] 首次安装引导发送失败，将在下次启动时重试')
-    }
+    // 多次都没发出去就留着标记，下次启动重试，免得引导直接丢失
+    logger.warn('[Guoba] 首次安装引导多次发送失败，将在下次启动时重试')
   }
 
 }
