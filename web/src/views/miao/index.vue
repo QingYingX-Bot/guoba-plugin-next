@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Alert, Result, Skeleton, Space, Tag } from 'ant-design-vue'
+import { Alert, Result, Skeleton, Tag } from 'ant-design-vue'
 import HelpCfgPanel from './components/HelpCfgPanel.vue'
 import HelpListPanel from './components/HelpListPanel.vue'
 import ThemePanel from './components/ThemePanel.vue'
@@ -113,11 +113,11 @@ onMounted(load)
     <Alert v-else-if="loadError" type="error" show-icon :message="loadError" />
 
     <template v-else>
-      <Space class="g-miao-meta" :size="6" wrap>
+      <div class="g-miao-meta">
         <Tag v-if="miaoVersion" :color="brand">喵喵 {{ miaoVersion }}</Tag>
         <Tag v-if="yunzaiVersion">Yunzai {{ yunzaiVersion }}</Tag>
         <Tag>{{ helpList.length }} 个分组 / {{ itemCount }} 条命令</Tag>
-      </Space>
+      </div>
 
       <HelpCfgPanel
         :cfg="helpCfg"
@@ -142,7 +142,12 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 原来用 ant Space + wrap，它会给容器塞内联 margin-bottom:-6px 做行距，
+   把这里的 margin 盖掉、导致下方卡片被上拽 6px 重叠。改普通 flex 自己掌控间距 */
 .g-miao-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 14px;
 }
 </style>

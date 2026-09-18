@@ -77,6 +77,23 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * 重新拉取弱令牌。
+   *
+   * liteToken 是服务端启动时随机生成的（server 每次重启就换一份），
+   * 页面开着不刷新时手里的可能是旧的，拿它请求图片会 401（裂图）。
+   * 图片加载失败时调这个刷新一次再重试。
+   */
+  async function refreshLiteToken() {
+    try {
+      const perm = await apiGetPermCode()
+      liteToken.value = perm?.liteToken ?? ''
+    } catch {
+      // 拉不到就维持原样，交给调用方决定要不要降级
+    }
+    return liteToken.value
+  }
+
   /** 拉取用户信息、权限、菜单 */
   async function loadUserInfo() {
     const [userInfo, perm, menuList, status] = await Promise.all([
@@ -107,6 +124,7 @@ export const useAuthStore = defineStore('auth', () => {
     loginByConsoleCode,
     logout,
     loadUserInfo,
+    refreshLiteToken,
   }
 })
 

@@ -58,6 +58,18 @@ const adding = ref(false)
 
 const replacing = ref(false)
 
+/**
+ * 图片加载失败自处理：liteToken 会随服务重启失效，旧页面拿旧 token 请求图片会 401 裂图。
+ * 失败时刷新一次 liteToken 再 bump 时间戳重载；只重试一次，避免死循环。
+ */
+const imgRetried = ref(false)
+async function onImgError() {
+  if (imgRetried.value) return
+  imgRetried.value = true
+  await auth.refreshLiteToken()
+  imgTs.value = Date.now()
+}
+
 const current = computed(() => themes.value.find((t) => t.name === selected.value))
 const isDefault = computed(() => selected.value === 'default')
 
@@ -221,7 +233,7 @@ onMounted(() => load(false))
             :class="{ 'is-active': t.name === selected }"
             @click="select(t.name)"
           >
-            <img :src="mainUrl(t.name)" alt="" class="g-theme-thumb" />
+            <img :src="mainUrl(t.name)" alt="" class="g-theme-thumb" @error="onImgError" />
             <div class="g-theme-info">
               <span class="g-theme-name">{{ t.name }}</span>
               <Tag v-if="t.name === 'default'" color="blue">默认</Tag>
@@ -253,7 +265,7 @@ onMounted(() => load(false))
           />
 
           <div class="g-theme-preview">
-            <img :src="mainUrl(current.name)" alt="" class="g-theme-main" />
+            <img :src="mainUrl(current.name)" alt="" class="g-theme-main" @error="onImgError" />
             <Upload
               v-if="!isDefault"
               :before-upload="replaceMain"
