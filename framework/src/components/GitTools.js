@@ -57,7 +57,28 @@ export default class GitTools {
   async init() {
     // logger.debug(`[Guoba] 开始执行 "${this.name}" 仓库的初始化操作： ${this.directory} `)
 
-    const checkRes = await this.checkRepo()
+    // 环境里没有 git（常见于未装 git 的 Windows / 精简容器，如柠檬崽 AlemonX）：
+    // 这俩仓库是可选资源，缺了不影响锅巴主体，静默降级成一条提示，别刷红也别抛异常。
+    if (!(await GitTools.isGitAvailable())) {
+      this.repoIsError = true
+      if (!GitTools._gitMissingWarned) {
+        GitTools._gitMissingWarned = true
+        const tip = `[Guoba] 未检测到 git，已跳过资源仓库(插件索引/资源库)的下载与更新。插件索引、备份还原等依赖 git 的功能将不可用；如需使用请先安装 git 并重启。`
+        if (typeof logger !== 'undefined') logger.warn(tip)
+        else console.warn(tip)
+      }
+      return
+    }
+
+    let checkRes
+    try {
+      checkRes = await this.checkRepo()
+    } catch (err) {
+      // checkRepo 在 git remote -v 失败时会 throw；init 是游离 promise，兜住避免 unhandledRejection
+      this.repoIsError = true
+      logger.error(`[Guoba] 检查 "${this.name}" 仓库状态时出错：${err?.message || err}`)
+      return
+    }
     if (checkRes === GitTools.CHECK_STATUS.NOT_EXIST) {
       const res = await this.cloneRepo()
       if (res.status !== GitTools.STATUS.OK) {
@@ -234,6 +255,21 @@ export default class GitTools {
     const res = await this[cacheKey]
     this[cacheKey] = null
     return res
+  }
+
+  /**
+   * 探测当前环境是否有可用的 git（一次性缓存，避免每个仓库都探一遍）。
+   * 走 `git --version`，不依赖 which/where，Linux / Windows 通用。
+   * @return {Promise<boolean>}
+   */
+  static isGitAvailable() {
+    if (GitTools._gitAvailablePromise) return GitTools._gitAvailablePromise
+    GitTools._gitAvailablePromise = new Promise((resolve) => {
+      exec('git --version', {windowsHide: true}, (error) => {
+        resolve(!error)
+      })
+    })
+    return GitTools._gitAvailablePromise
   }
 
   exec(cmd) {
