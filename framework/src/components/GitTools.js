@@ -1,4 +1,5 @@
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import {exec} from 'child_process'
 import {cfg} from '#guoba.platform'
@@ -57,15 +58,13 @@ export default class GitTools {
   async init() {
     // logger.debug(`[Guoba] 开始执行 "${this.name}" 仓库的初始化操作： ${this.directory} `)
 
-    // 当前进程调不起 git：可能真没装，也可能是启动器/框架拉起子进程时没继承到完整 PATH
-    // （典型：AlemonX 等把 Yunzai 跑成子进程，连 System32 里的 chcp/netstat 都一起调不起来，
-    //  这时 git 其实装了、只是 PATH 里没有）。这俩仓库是可选资源，缺了不影响锅巴主体，
-    // 静默降级成一条提示，别刷红也别抛异常。
+    // isGitAvailable 已尝试过「探测 + 找不到就补 PATH 再探」，走到这儿说明常见安装位置也没找到，
+    // 基本就是真没装。这俩仓库是可选资源，缺了不影响锅巴主体，静默降级成一条提示，别刷红也别抛异常。
     if (!(await GitTools.isGitAvailable())) {
       this.repoIsError = true
       if (!GitTools._gitMissingWarned) {
         GitTools._gitMissingWarned = true
-        const tip = `[Guoba] 当前环境调不起 git，已跳过资源仓库(插件索引/资源库)的下载与更新，插件索引/备份还原等功能暂不可用。若已装 git 仍报此提示，多为运行进程的 PATH 未包含 git（常见于用启动器/框架把 Yunzai 跑成子进程）；否则请安装 git。修好后重启生效。`
+        const tip = `[Guoba] 未找到可用的 git，已跳过资源仓库(插件索引/资源库)的下载与更新，插件索引/备份还原等功能暂不可用。请安装 git（若已装在非常见目录，可将其加入系统 PATH）后重启。`
         if (typeof logger !== 'undefined') logger.warn(tip)
         else console.warn(tip)
       }
@@ -261,17 +260,79 @@ export default class GitTools {
 
   /**
    * 探测当前环境是否有可用的 git（一次性缓存，避免每个仓库都探一遍）。
-   * 走 `git --version`，不依赖 which/where，Linux / Windows 通用。
+   *
+   * 先直接跑 `git --version`；跑不起来不代表没装 —— 用启动器/框架（如 AlemonX）把
+   * Yunzai 跑成子进程时，子进程常没继承到完整 PATH（连 System32 都可能缺），git 装了
+   * 也调不起。这时去常见安装位置找出 git，把它的目录补进本进程 process.env.PATH，
+   * 后续所有 git 命令走同一个 env 就恢复可用了。真的哪都找不到才算不可用。
    * @return {Promise<boolean>}
    */
   static isGitAvailable() {
     if (GitTools._gitAvailablePromise) return GitTools._gitAvailablePromise
-    GitTools._gitAvailablePromise = new Promise((resolve) => {
-      exec('git --version', {windowsHide: true}, (error) => {
-        resolve(!error)
-      })
-    })
+    GitTools._gitAvailablePromise = (async () => {
+      if (await GitTools._probeGit()) return true
+      // PATH 里没有：找出 git 目录补进 PATH 再探一次
+      const gitDir = GitTools._findGitDir()
+      if (gitDir) {
+        const sep = process.platform === 'win32' ? ';' : ':'
+        process.env.PATH = `${gitDir}${sep}${process.env.PATH || ''}`
+        if (typeof logger !== 'undefined') {
+          logger.mark(`[Guoba] git 不在进程 PATH 中，已自动补入其安装目录：${gitDir}`)
+        }
+        if (await GitTools._probeGit()) return true
+      }
+      return false
+    })()
     return GitTools._gitAvailablePromise
+  }
+
+  /** 跑一次 `git --version` 判断当前 PATH 下 git 是否可用 */
+  static _probeGit() {
+    return new Promise((resolve) => {
+      exec('git --version', {windowsHide: true}, (error) => resolve(!error))
+    })
+  }
+
+  /**
+   * 在常见安装位置找 git 所在目录（返回含 git 可执行文件的那个目录，供拼进 PATH）。
+   * 不依赖 where/which —— PATH 坏掉时它们（在 System32 里）自己也可能调不起。
+   * @return {string|null}
+   */
+  static _findGitDir() {
+    const isWin = process.platform === 'win32'
+    const exe = isWin ? 'git.exe' : 'git'
+    const candidateDirs = []
+    if (isWin) {
+      const envDirs = [
+        process.env.ProgramFiles,
+        process.env['ProgramFiles(x86)'],
+        process.env.ProgramW6432,
+        process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs'),
+      ].filter(Boolean)
+      for (const base of envDirs) {
+        candidateDirs.push(path.join(base, 'Git', 'cmd'))
+        candidateDirs.push(path.join(base, 'Git', 'bin'))
+      }
+      // 环境变量也可能没继承到，兜底写几个最常见的绝对路径
+      for (const base of ['C:\\Program Files', 'C:\\Program Files (x86)']) {
+        candidateDirs.push(path.join(base, 'Git', 'cmd'))
+        candidateDirs.push(path.join(base, 'Git', 'bin'))
+      }
+      // scoop / winget 用户级安装
+      const home = os.homedir()
+      if (home) {
+        candidateDirs.push(path.join(home, 'scoop', 'apps', 'git', 'current', 'cmd'))
+        candidateDirs.push(path.join(home, 'scoop', 'shims'))
+      }
+    } else {
+      candidateDirs.push('/usr/bin', '/usr/local/bin', '/bin', '/opt/homebrew/bin')
+    }
+    for (const dir of candidateDirs) {
+      try {
+        if (fs.existsSync(path.join(dir, exe))) return dir
+      } catch {}
+    }
+    return null
   }
 
   exec(cmd) {
