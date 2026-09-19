@@ -98,6 +98,7 @@ defineExpose({ validate, getValues, resetFields, model })
     :layout="effectiveLayout"
     :labelCol="labelCol"
     :labelWrap="true"
+    labelAlign="left"
     :disabled="disabled"
     class="g-schema-form"
   >
