@@ -95,3 +95,9 @@ npm install express multer jsonwebtoken
 - [Yunzai-Bot](https://github.com/yoimiya-kokomi/Yunzai-Bot) / [Miao-Yunzai](https://github.com/yoimiya-kokomi/Miao-Yunzai) / [TRSS-Yunzai](https://github.com/TimeRainStarSky/Yunzai) —— 宿主框架
 - [Ant Design Vue](https://antdv.com/) · [Vue3](https://vuejs.org/) · [Vite](https://vitejs.dev/) —— 前端基建
 
+# 开源协议
+
+[GPL-3.0-or-later](LICENSE) © 2026 cchanlan
+
+本仓库基于 [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin)（作者
+[@Zolay-Poi](https://gitee.com/zolay-poi)）二次开发，遵循同一协议。
