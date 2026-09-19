@@ -190,6 +190,7 @@ function visit(page: any) {
       :pagination="false"
       row-key="id"
       size="middle"
+      :scroll="{ x: 560 }"
     >
       <template #emptyText>
         <Empty description="还没有任何扩展页面，点「新建页面」开始" />

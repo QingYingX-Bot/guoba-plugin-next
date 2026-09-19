@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Divider, FormItem, Tooltip } from 'ant-design-vue'
+import { FormItem, Tooltip } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
-import { CHECKED_MODEL_COMPONENTS, NO_MODEL_COMPONENTS, resolveComponent } from './componentMap'
+import {
+  BLOCK_COMPONENTS,
+  CHECKED_MODEL_COMPONENTS,
+  NO_MODEL_COMPONENTS,
+  resolveComponent,
+} from './componentMap'
 import { toAntdRules } from '@/utils/schema'
 import { get, set } from 'lodash-es'
 import type { FormSchema } from '@/types'
@@ -15,6 +20,17 @@ const props = defineProps<{
 const comp = computed(() => resolveComponent(props.schema.component))
 
 const isDivider = computed(() => props.schema.component === 'Divider')
+
+/** 分割线文案：短的当小标题（左色条），长的当说明区块（软底纹），空的只画一条线 */
+const dividerLabel = computed(() => (props.schema.label ?? '').trim())
+const dividerIsNote = computed(() => dividerLabel.value.length > 24)
+
+/**
+ * 整行大组件（子表单、标签、多选群/好友等）：label 塞进固定 160px 的横向列里会被挤成
+ * 好几行，很难看。这类组件让 FormItem 走整行竖排，label 独占一行放上方。
+ */
+const isBlock = computed(() => BLOCK_COMPONENTS.has(props.schema.component ?? ''))
+const fullSpan = { span: 24 }
 
 /** 未知组件：给出可见提示，而不是静默渲染成空白 */
 const isUnknown = computed(() => !comp.value && !isDivider.value)
@@ -59,9 +75,12 @@ const itemName = computed(() =>
 </script>
 
 <template>
-  <Divider v-if="isDivider" orientation="left" class="g-schema-divider">
-    {{ schema.label }}
-  </Divider>
+  <!-- 分割线：空→细线；短标题→左色条小标题；长文案→柔和说明块 -->
+  <template v-if="isDivider">
+    <div v-if="!dividerLabel" class="g-schema-hr" />
+    <div v-else-if="dividerIsNote" class="g-schema-note">{{ dividerLabel }}</div>
+    <div v-else class="g-schema-section">{{ dividerLabel }}</div>
+  </template>
 
   <FormItem
     v-else
@@ -69,6 +88,9 @@ const itemName = computed(() =>
     :rules="rules"
     :extra="schema.bottomHelpMessage"
     class="g-schema-item"
+    :class="{ 'is-block': isBlock }"
+    :label-col="isBlock ? fullSpan : undefined"
+    :wrapper-col="isBlock ? fullSpan : undefined"
   >
     <template #label>
       <span class="g-schema-label">
@@ -106,10 +128,47 @@ const itemName = computed(() =>
 </template>
 
 <style scoped>
-.g-schema-divider {
-  margin: 20px 0 12px;
+/* 短标题：左侧品牌色条 + 整行底线，文字自然折行不被横线穿过 */
+.g-schema-section {
+  margin: 22px 0 14px;
+  padding: 0 0 8px 10px;
+  border-left: 3px solid var(--g-brand);
+  border-bottom: 1px solid var(--g-border);
   font-size: 13px;
+  font-weight: 600;
+  color: var(--g-text);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+/* 长文案（命令入口这类）：柔和底纹说明块，读着像提示而不是标题，不再横线穿字 */
+.g-schema-note {
+  margin: 18px 0 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--g-brand);
+  border-radius: 0 8px 8px 0;
+  background: var(--g-bg-soft);
+  font-size: 12px;
+  line-height: 1.7;
   color: var(--g-text-sub);
+  word-break: break-word;
+}
+
+/* 无文字：纯分隔线 */
+.g-schema-hr {
+  margin: 20px 0;
+  border-top: 1px solid var(--g-border);
+}
+
+/* 整行大组件：label 上方独占一行（横向表单里也强制竖排这一项） */
+.g-schema-item.is-block :deep(.ant-form-item-label) {
+  text-align: left;
+  padding-bottom: 4px;
+}
+.g-schema-item.is-block :deep(.ant-form-item-label > label) {
+  height: auto;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .g-schema-label {

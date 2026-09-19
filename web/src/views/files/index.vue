@@ -462,7 +462,11 @@ onMounted(load)
             :title="record.isDir ? '进入文件夹' : '单击预览'"
             @click="onOpen(record)"
           >
-            <GIcon :icon="record.isDir ? 'ant-design:folder-outlined' : 'ant-design:file-outlined'" :size="15" />
+            <GIcon
+              :icon="record.isDir ? 'ant-design:folder-outlined' : 'ant-design:file-outlined'"
+              :color="record.isDir ? 'var(--g-brand-ink)' : 'var(--g-text-dim)'"
+              :size="15"
+            />
             <span>{{ record.name }}</span>
           </span>
         </template>
@@ -621,7 +625,8 @@ onMounted(load)
 }
 
 .g-files-crumb-btn.is-root {
-  color: var(--g-brand);
+  /* 跟上面的文件夹名用同一个色，面包屑和列表看着才是一套 */
+  color: var(--g-brand-ink);
   font-weight: 500;
 }
 
@@ -647,9 +652,18 @@ onMounted(load)
   font-size: 13px;
 }
 
+/**
+ * 文件夹与单文件必须一眼分清。
+ *
+ * 试过「只调文字色」和「给名字垫底片」两条路，都不行：前者两个都是低饱和深色，并排放着
+ * 实测看不出差别；后者一排灰色药丸连成串，又俗又占地方。
+ * 最后落在**图标**上 —— 图标在模板里直接给颜色（文件压淡、文件夹上色），
+ * 扫一眼先看到图标，不用读名字就能分出哪边是文件夹。
+ */
 .g-files-name.is-dir {
   cursor: pointer;
-  color: var(--g-brand);
+  color: var(--g-brand-ink);
+  font-weight: 600;
 }
 
 .g-files-name:not(.is-dir) {

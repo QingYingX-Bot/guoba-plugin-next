@@ -318,7 +318,7 @@ onMounted(() => {
           row-key="key"
           size="small"
           :pagination="false"
-          :scroll="{ y: 'calc(100vh - 320px)' }"
+          :scroll="{ x: 'max-content', y: 'calc(100vh - 320px)' }"
           :row-selection="{
             selectedRowKeys: selectedKeys,
             onChange: (keys: any) => (selectedKeys = keys as string[]),

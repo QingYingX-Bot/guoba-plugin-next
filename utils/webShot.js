@@ -169,6 +169,12 @@ const CHALLENGE_SELECTORS = [
   '.g-recaptcha', 'iframe[src*="/recaptcha/"]',
   // 极验、阿里滑块、阿里安全
   '.geetest_holder', '.geetest_panel', '#nc_1_wrapper', '.nc-container', '#sec-container',
+  // 短信登录表单（联通那类凭 token 查余量的工具站）。
+  // **光看「要验证码」不够** —— 邮箱验证码激活、找回密码页都会提，好在那些页面的
+  // 标题/路径早就被登录墙那几条接住了，剩下这种「整页就一个手机号 + 验证码表单」的
+  // 才是真正截不出东西的，单独认它
+  'input[type="tel"][placeholder*="手机"]', 'input[placeholder*="验证码"]',
+  'input[placeholder*="短信验证"]', 'input[maxlength="6"][inputmode="numeric"]',
   // DataDome / PerimeterX / AWS WAF
   'iframe[src*="captcha-delivery.com"]', '#px-captcha', '#awswaf-captcha', 'iframe[src*="awswaf"]'
 ]
@@ -207,16 +213,6 @@ const QR_SELECTORS = '[class*="qrcode" i],[id*="qrcode" i],[class*="qr-code" i],
 const QR_HARD_SELECTORS = 'iframe[src*="qrconnect"],iframe[src*="open.weixin.qq.com/connect"],.impowerBox,.wx_qrcode'
 /** 扫码措辞。**必须带「登录」二字** —— 「扫码下载」「扫码关注」「扫码支付」全是正常页面在说 */
 const QR_LOGIN_RE = /扫[一码].{0,6}登录|扫描.{0,8}登录|二维码.{0,4}登录|scan (?:the )?qr ?code to (?:log|sign) ?in|scan to (?:log|sign) ?in/i
-
-/** 不发图时给群里的说法 */
-export const UNWORTHY_TIP = {
-  challenge: '这个网站要过人机验证，截不到内容',
-  login: '需要登录，不发图',
-  blocked: '这个网站不让截图，自己点开看',
-  leak: '会显示服务器网络信息，不发图',
-  error: '网页打不开，不发图',
-  empty: '页面没什么内容，不发图'
-}
 
 /**
  * 明显是在查 IP 的搜索词 —— 连搜都不用搜。

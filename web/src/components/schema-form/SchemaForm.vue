@@ -3,6 +3,7 @@ import { computed, provide, ref, watch } from 'vue'
 import { Form, Tabs, TabPane } from 'ant-design-vue'
 import SchemaFormItem from './SchemaFormItem.vue'
 import { FORM_MODEL_KEY } from './context'
+import { useAppStore } from '@/stores/app'
 import {
   buildFormModel,
   hasGroups,
@@ -30,8 +31,18 @@ const props = withDefaults(
   { layout: 'horizontal', labelWidth: 160 },
 )
 
+const appStore = useAppStore()
+
 const formRef = ref<any>(null)
 const model = ref<Record<string, any>>({})
+
+/**
+ * 窄屏强制竖排：横向表单的 label 固定占 160px，在 385px 手机上会把输入框挤成一条缝
+ * （插件配置、云崽配置都走这里）。手机上一律竖排，label 独占一行，输入框拿满宽度。
+ */
+const effectiveLayout = computed(() =>
+  appStore.isMobile ? 'vertical' : props.layout,
+)
 
 // GButtons 等组件需要读取整张表单的值
 provide(FORM_MODEL_KEY, model)
@@ -50,7 +61,9 @@ const groups = computed(() => splitGroups(props.schemas))
 const activeGroup = ref('0')
 
 const labelCol = computed(() =>
-  props.layout === 'horizontal' ? { style: { width: `${props.labelWidth}px` } } : undefined,
+  effectiveLayout.value === 'horizontal'
+    ? { style: { width: `${props.labelWidth}px` } }
+    : undefined,
 )
 
 /** 取值时去掉「仅为渲染补出来的空父级」，见 utils/schema.ts */
@@ -82,7 +95,7 @@ defineExpose({ validate, getValues, resetFields, model })
   <Form
     ref="formRef"
     :model="model"
-    :layout="layout"
+    :layout="effectiveLayout"
     :labelCol="labelCol"
     :labelWrap="true"
     :disabled="disabled"
@@ -124,5 +137,14 @@ defineExpose({ validate, getValues, resetFields, model })
 
 .g-schema-tabs :deep(.ant-tabs-nav) {
   margin-bottom: 20px;
+}
+
+/* 窄屏：数字框/普通输入框默认不铺满，竖排下留一小截很难点，统一拉满行宽 */
+@media (max-width: 768px) {
+  .g-schema-form :deep(.ant-input-number),
+  .g-schema-form :deep(.ant-picker),
+  .g-schema-form :deep(.ant-select) {
+    width: 100%;
+  }
 }
 </style>

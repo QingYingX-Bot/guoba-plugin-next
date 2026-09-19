@@ -163,7 +163,7 @@ export async function renderLogImage(items, options = {}) {
  * 而且宿主也可能压根没装渲染后端 —— 所以只做动态探测，探不到就让调用方发文本，
  * 绝不能因为 import 不到某个路径把整个插件的加载搞崩。
  */
-async function getRenderer() {
+export async function getRenderer() {
   if (cachedRenderer !== undefined) return cachedRenderer
   cachedRenderer = await findRenderer()
   return cachedRenderer

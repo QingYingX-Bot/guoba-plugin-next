@@ -8,6 +8,7 @@
 import { computed } from 'vue'
 import { Card, Skeleton, Tooltip } from 'ant-design-vue'
 import GChart from '@/components/GChart.vue'
+import { useBrandColor } from '@/theme/useBrandColor'
 import { formatBytes, formatDuration, formatPercent } from '@/utils/format'
 import type { SystemStatus } from '@/types'
 
@@ -16,11 +17,13 @@ const props = defineProps<{
   loading: boolean
 }>()
 
-/** 占用越高越警示：正常金色 → 偏高橙 → 危险红 */
+const { brand } = useBrandColor()
+
+/** 占用越高越警示：正常用品牌色 → 偏高橙 → 危险红 */
 function colorOf(percent: number) {
   if (percent >= 90) return '#e05c5c'
   if (percent >= 70) return '#e0954a'
-  return '#d19f56'
+  return brand.value
 }
 
 interface RingItem {

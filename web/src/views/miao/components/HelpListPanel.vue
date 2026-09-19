@@ -14,7 +14,10 @@ import {
   Tooltip,
 } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
+import { useAppStore } from '@/stores/app'
 import type { MiaoHelpGroup, MiaoHelpItem } from '@/types'
+
+const appStore = useAppStore()
 
 /**
  * 帮助列表编辑器。
@@ -137,7 +140,30 @@ function itemCount(group: MiaoHelpGroup) {
           <Input v-model:value="group.group" placeholder="分组名称" class="g-group-input" />
         </div>
 
+        <!-- 手机：4 列表格塞不下（命令/说明会被压成单字），改竖排卡片，每项各字段独占一行 -->
+        <div v-if="appStore.isMobile" class="g-item-cards">
+          <div v-for="(record, index) in group.list ?? []" :key="index" class="g-item-card">
+            <div class="g-item-row">
+              <div class="g-item-icon">
+                <span class="g-item-tag">图标</span>
+                <InputNumber v-model:value="record.icon" :min="0" size="small" class="g-full" />
+              </div>
+              <div class="g-item-ops">
+                <Button type="text" size="small" :disabled="index === 0" @click="moveItem(group, index, -1)">
+                  <GIcon icon="ant-design:arrow-up-outlined" :size="13" />
+                </Button>
+                <Button type="text" danger size="small" @click="removeItem(group, index)">
+                  <GIcon icon="ant-design:close-outlined" :size="13" />
+                </Button>
+              </div>
+            </div>
+            <Input v-model:value="record.title" size="small" placeholder="#命令" addon-before="命令" />
+            <Input v-model:value="record.desc" size="small" placeholder="命令说明" addon-before="说明" />
+          </div>
+        </div>
+
         <Table
+          v-else
           :columns="columns"
           :data-source="group.list ?? []"
           :pagination="false"
@@ -215,6 +241,49 @@ function itemCount(group: MiaoHelpGroup) {
 
 .g-full {
   width: 100%;
+}
+
+/* 手机端：每条命令一张竖排小卡，字段各占一行，不再挤成单字 */
+.g-item-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.g-item-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--g-border);
+  border-radius: 8px;
+  background: var(--g-bg-soft);
+}
+
+.g-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.g-item-icon {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.g-item-tag {
+  font-size: 12px;
+  color: var(--g-text-dim);
+  flex-shrink: 0;
+}
+
+.g-item-ops {
+  display: flex;
+  flex-shrink: 0;
 }
 
 .g-add-item {

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Alert, Result, Skeleton, Space, Tag } from 'ant-design-vue'
+import { Alert, Result, Skeleton, Tag } from 'ant-design-vue'
 import HelpCfgPanel from './components/HelpCfgPanel.vue'
 import HelpListPanel from './components/HelpListPanel.vue'
+import HelpPreviewPanel from './components/HelpPreviewPanel.vue'
 import ThemePanel from './components/ThemePanel.vue'
 import BackupPanel from './components/BackupPanel.vue'
 import { apiGetMiaoHelpCfg, apiSaveMiaoHelpCfg } from '@/api'
+import { useBrandColor } from '@/theme/useBrandColor'
 import type { MiaoHelpCfgBody, MiaoHelpGroup } from '@/types'
 
 /**
@@ -17,6 +19,8 @@ import type { MiaoHelpCfgBody, MiaoHelpGroup } from '@/types'
  *   icon     → FormData 里的文件，可选
  * 所以整页共用一次提交，四个面板的保存按钮都走 save()。
  */
+const { brand } = useBrandColor()
+
 const loading = ref(true)
 /** 路由存在但接口 404，说明没装 miao-plugin */
 const notInstalled = ref(false)
@@ -110,11 +114,11 @@ onMounted(load)
     <Alert v-else-if="loadError" type="error" show-icon :message="loadError" />
 
     <template v-else>
-      <Space class="g-miao-meta" :size="6" wrap>
-        <Tag v-if="miaoVersion" color="#d19f56">喵喵 {{ miaoVersion }}</Tag>
+      <div class="g-miao-meta">
+        <Tag v-if="miaoVersion" :color="brand">喵喵 {{ miaoVersion }}</Tag>
         <Tag v-if="yunzaiVersion">Yunzai {{ yunzaiVersion }}</Tag>
         <Tag>{{ helpList.length }} 个分组 / {{ itemCount }} 条命令</Tag>
-      </Space>
+      </div>
 
       <HelpCfgPanel
         :cfg="helpCfg"
@@ -131,6 +135,8 @@ onMounted(load)
         @update:list="helpList = $event"
       />
 
+      <HelpPreviewPanel :cfg="helpCfg" :list="helpList" />
+
       <ThemePanel @changed="load" />
 
       <BackupPanel @restored="load" />
@@ -139,7 +145,12 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 原来用 ant Space + wrap，它会给容器塞内联 margin-bottom:-6px 做行距，
+   把这里的 margin 盖掉、导致下方卡片被上拽 6px 重叠。改普通 flex 自己掌控间距 */
 .g-miao-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 14px;
 }
 </style>
