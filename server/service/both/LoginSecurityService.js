@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import { Service, GuobaError } from '#guoba.framework'
 import { cfg, Constant } from '#guoba.platform'
-import { randomString, sendToMaster } from '#guoba.utils'
+import { randomString } from '#guoba.utils'
 import { getClientIp, normalizeClientIp } from '../../utils/clientIp.js'
 import { hashPassword, validatePassword, validateUsername, verifyPassword } from '../../utils/passwordHash.js'
 

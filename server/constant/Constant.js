@@ -14,6 +14,9 @@ export default {
 
   LOGIN_CAPTCHA_TTL: 300,
   LOGIN_CAPTCHA_COOLDOWN: 60,
+  // 最近一次在聊天里请求登录的主人身份缓存多久（秒）。
+  // 网页取验证码时只私聊发给他本人，不广播给所有主人
+  LOGIN_REQUESTER_TTL: 1800,
   LOGIN_CAPTCHA_MAX_ATTEMPTS: 5,
   LOGIN_CAPTCHA_LOCK_TTL: 900,
   LOGIN_PASSWORD_MAX_ATTEMPTS: 10,
