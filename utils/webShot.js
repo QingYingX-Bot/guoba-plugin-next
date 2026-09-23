@@ -28,6 +28,7 @@ export const DEFAULT_CONFIG = {
   blockPrivate: true,
   autoScroll: true,
   skipUnworthy: true,
+  maxHeight: 12000,
   blacklist: []
 }
 
@@ -535,6 +536,42 @@ export async function inspectPage(page, status = 0, getEgress = null) {
   return null
 }
 
+/** 图片超过这个体积就转 jpeg 重截一次 */
+const MAX_BYTES = 3 * 1024 * 1024
+
+/**
+ * 截图。两件兜底的事：
+ *
+ *  1. 页面比 maxHeight 还高就只截前面一段。fullPage 遇上长文、长列表、几百楼的 issue，
+ *     会截出十几 MB 的巨图 —— 发到群里要么失败要么被压成一团糊，不如截前面一段清楚。
+ *  2. PNG 超过 MAX_BYTES 就转 jpeg 再截一次。画质 82 肉眼看不出差，体积能小一大截。
+ */
+async function capture(page, cfg) {
+  const maxH = Math.max(0, Number(cfg.maxHeight) || 0)
+
+  // 量内容尺寸：body 和 documentElement 取大的那个（有的站把高度设在 html 上、有的设在 body 上）
+  const size = await page.evaluate(() => ({
+    h: Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0),
+    w: Math.max(document.body?.scrollWidth || 0, document.documentElement?.scrollWidth || 0)
+  })).catch(() => ({h: 0, w: 0}))
+
+  // clip 和 fullPage 互斥，走 clip 分支时要自己给宽度
+  const over = maxH > 0 && size.h > maxH
+  const shot = over
+    ? {clip: {x: 0, y: 0, width: Math.max(size.w, 1), height: maxH}, captureBeyondViewport: true}
+    : {fullPage: true}
+  if (over) {
+    logger.debug(`[Guoba] 网页截图页面高 ${size.h}px，只截前 ${maxH}px`)
+  }
+
+  let buf = await page.screenshot(shot)
+  if (buf.length > MAX_BYTES) {
+    logger.debug(`[Guoba] 网页截图 PNG ${(buf.length / 1048576).toFixed(1)}MB，转 jpeg 重截`)
+    buf = await page.screenshot({...shot, type: 'jpeg', quality: 82})
+  }
+  return buf
+}
+
 /** 浏览器启动参数。--no-sandbox 是 root 下跑必须的（容器和 VPS 上普遍如此） */
 function launchArgs(proxy) {
   const args = [
@@ -555,6 +592,9 @@ async function preparePage(browser, cfg) {
   const page = await browser.newPage()
   await page.setViewport({width: 1920, height: 1080})
   await page.setUserAgent(UA)
+  // 顺带把语言偏好也发出去。`--lang=zh-CN` 只管浏览器界面，内容协商看的是这个头，
+  // 少了它一些外站会按 IP 给英文页甚至地区跳转页
+  await page.setExtraHTTPHeaders({'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'})
 
   // 只拦「页面导航」请求，防止重定向 / iframe 打到内网绕过前置校验。
   // **不能用 page.setRequestInterception**：它会把全部静态资源都拦下来、
@@ -606,7 +646,7 @@ async function shootOnce(targetUrl, cfg, proxy, isLast = true) {
       if (bad) throw bad
     }
 
-    return await page.screenshot({fullPage: true})
+    return await capture(page, cfg)
   } finally {
     await browser.close()
   }
@@ -682,7 +722,7 @@ async function baiduShoot(weburl, keyWd, cfg, proxy, isLast = true) {
       if (bad) throw bad
     }
 
-    return await page.screenshot({fullPage: true})
+    return await capture(page, cfg)
   } finally {
     await browser.close()
   }

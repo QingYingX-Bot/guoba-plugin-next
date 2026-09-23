@@ -207,6 +207,18 @@ export function supportGuoba () {
           component: 'Switch'
         },
         {
+          field: 'webShot.maxHeight',
+          label: '长图上限（像素）',
+          helpMessage: '页面比这个高度还长时，只截前面这一段',
+          bottomHelpMessage: '防止超长页面截出巨图发不出去。0 表示不限高',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            max: 16000,
+            placeholder: '默认 12000'
+          }
+        },
+        {
           field: 'webShot.proxy',
           label: '代理地址',
           bottomHelpMessage: '访问 GitHub 这类外网站要用，留空则永远直连。例：http://127.0.0.1:7890',
