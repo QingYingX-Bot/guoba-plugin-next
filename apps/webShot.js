@@ -110,6 +110,19 @@ export class GuobaWebShot extends plugin {
       logger.mark(`[Guoba] 网页截图跳到内网地址 ${url}`)
       return
     }
-    await this.reply('截图失败，网页打不开或加载超时')
+    // 笼统一句「打不开或超时」会把三种毛病糊在一起：浏览器没起来、代理没连上、真超时。
+    // 分开说，省得每次都要翻日志才知道是哪一环
+    const msg = String(err.message || '')
+    if (/Could not find Chromium|Failed to launch|No usable sandbox|spawn .*ENOENT/i.test(msg)) {
+      await this.reply('截图失败：浏览器没就绪')
+    } else if (/ERR_PROXY_CONNECTION_FAILED|ERR_TUNNEL_CONNECTION_FAILED/i.test(msg)) {
+      await this.reply('截图失败：代理连不上，检查面板里填的代理地址')
+    } else if (/ERR_NAME_NOT_RESOLVED/i.test(msg)) {
+      await this.reply('截图失败：这个网址解析不了')
+    } else if (/Timeout|timed out|ERR_TIMED_OUT|ERR_CONNECTION_TIMED_OUT|ERR_CONNECTION_RESET/i.test(msg)) {
+      await this.reply('截图失败：网页加载超时')
+    } else {
+      await this.reply('截图失败，网页打不开或加载超时')
+    }
   }
 }

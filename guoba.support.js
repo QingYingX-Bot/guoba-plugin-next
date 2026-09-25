@@ -26,7 +26,7 @@ export function supportGuoba () {
         'https://github.com/guoba-yunzai'
       ],
       // 仓库地址
-      link: 'https://github.com/guoba-yunzai/guoba-plugin',
+      link: 'https://github.com/cchanlan/guoba-plugin-next',
       isV3: true,
       isV2: false,
       // 是否显示在左侧菜单，可选值：auto、true、false
@@ -205,6 +205,18 @@ export function supportGuoba () {
           label: '滚动整页',
           bottomHelpMessage: '滚一遍页面把懒加载的图片都触发出来。长页面会慢几秒，关掉更快',
           component: 'Switch'
+        },
+        {
+          field: 'webShot.maxHeight',
+          label: '长图上限（像素）',
+          helpMessage: '页面比这个高度还长时，只截前面这一段',
+          bottomHelpMessage: '防止超长页面截出巨图发不出去。0 表示不限高',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            max: 16000,
+            placeholder: '默认 12000'
+          }
         },
         {
           field: 'webShot.proxy',

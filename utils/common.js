@@ -112,6 +112,49 @@ export async function sendToMaster(msg, all = true, idx = 0) {
 }
 
 /**
+ * 只给一个主人发一组消息，不广播。
+ *
+ * 登录验证码这类消息只该被触发者本人看到，发给所有主人等于把验证码摊给全群管理员。
+ * 优先发给 target（最近在聊天里请求登录的账号）；它发不出去（离线、没加好友）时，
+ * 才按顺序退到第一个能发出去的真实主人。收件人一旦确定，整组消息都发给他，
+ * 免得只收到半截。
+ *
+ * @param messages 消息列表，逐条发送（方便手机端长按复制）
+ * @param target 指定的主人身份 {botId, userId}，可为空
+ * @return {Promise<number>} 成功发出的消息条数，一条都没发出去返回 0
+ */
+export async function sendToOneMaster(messages, target = null) {
+  const list = Array.isArray(messages) ? messages : [messages]
+  const candidates = []
+  if (target?.userId) {
+    candidates.push({botId: target.botId ?? null, userId: target.userId})
+  }
+  for (const master of await getRealMasterList()) {
+    if (!candidates.some(i => String(i.userId) === String(master.userId) && i.botId === master.botId)) {
+      candidates.push(master)
+    }
+  }
+  if (candidates.length === 0) {
+    logger.warn('[Guoba] 未配置主人账号，无法发送私聊消息')
+    return 0
+  }
+  for (const receiver of candidates) {
+    let sent = 0
+    for (const msg of list) {
+      if (!await replyPrivate(receiver, msg)) break
+      sent++
+    }
+    if (sent === list.length) {
+      return sent
+    }
+    if (sent > 0) {
+      logger.mark(`[Guoba] 给主人(${receiver.userId})发消息中断，改用其他主人重发`)
+    }
+  }
+  return 0
+}
+
+/**
  * 给指定 Bot 账号的主人发送消息
  *
  * 与 sendToMaster 的区别：只发给这个账号名下的主人，不会顺带发给 stdin

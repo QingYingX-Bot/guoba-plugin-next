@@ -1,3 +1,24 @@
+guoba-plugin
+Copyright (C) 2026 cchanlan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+本仓库基于 zolay 的 guoba-plugin（https://github.com/guoba-yunzai/guoba-plugin）
+二次开发，遵循同一 GPL-3.0-or-later 协议。
+
+--------------------------------------------------------------------------------
+
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 

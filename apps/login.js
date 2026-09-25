@@ -1,6 +1,6 @@
 import { autowired } from '#guoba.framework'
 import { makeForwardMsg } from '#guoba.utils'
-import { cfg } from '#guoba.platform'
+import { cfg, Constant } from '#guoba.platform'
 
 export class GuobaLogin extends plugin {
   loginService = autowired('loginService')
@@ -32,6 +32,26 @@ export class GuobaLogin extends plugin {
     return this.reply('锅巴服务启动失败，请发送“#锅巴帮助”。')
   }
 
+  /**
+   * 记下本次请求登录的主人身份，网页取验证码时只发给他本人。
+   *
+   * 网页那一步认不出是谁在操作，只能靠这里留个记录；没记录（比如直接打开
+   * 网页登录）时服务端会退回发给第一个主人。记录失败不影响正常发地址。
+   */
+  async rememberRequester () {
+    try {
+      const key = `${Constant.REDIS_PREFIX}login-requester`
+      const data = JSON.stringify({
+        botId: this.e.self_id != null ? String(this.e.self_id) : null,
+        userId: String(this.e.user_id),
+      })
+      await redis.set(key, data, { EX: Constant.LOGIN_REQUESTER_TTL })
+    } catch (err) {
+      logger.error('[Guoba] 记录登录请求者失败')
+      logger.error(err)
+    }
+  }
+
   async resetLogin () {
     if (!this.e.isMaster) return false
     let configured
@@ -53,6 +73,9 @@ export class GuobaLogin extends plugin {
 
   async login () {
     if (!this.e.isMaster) return false
+
+    // 记下是谁请求的登录：网页点“获取登录令牌”时，验证码只私聊发给他本人
+    await this.rememberRequester()
 
     let configured, webAddress
     try {
