@@ -44,8 +44,6 @@ const activeTab = ref('redis')
 <style scoped>
 .g-data {
   min-height: 100%;
-  /* 数据表列多，宽屏要能用满，不套 g-page 默认的 1400px 限宽 */
-  max-width: none;
 }
 
 /* ant 的 Tabs 内容区不带上边距，卡片会顶着标签栏的下边线 */

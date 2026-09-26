@@ -132,7 +132,10 @@ defineExpose({ validate, getValues, resetFields, model })
 </template>
 
 <style scoped>
-.g-schema-form {
+/* 表单本身铺满卡片，只把「控件 + 说明文字」限在 900px：
+   宽屏下输入框跟着拉满整屏会难读，限宽后各行等宽、左侧对齐。 */
+.g-schema-form :deep(.ant-form-item-control-input-content),
+.g-schema-form :deep(.ant-form-item-extra) {
   max-width: 900px;
 }
 
