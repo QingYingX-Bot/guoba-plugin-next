@@ -7,8 +7,8 @@
 > 本 Fork 重写了整套前端并新增若干功能，见下方「相对原版」。
 
 仅支持 V3 的 Yunzai（V2 只支持迁移到 V3）。已适配 **Miao-Yunzai**、**TRSS-Yunzai** 及其 fork
-（如 [Orangezai](https://github.com/zhiyu1998/Orangezai)）——TRSS 系靠能力而非名字识别，
-换名字的 fork 也会自动共享端口挂在 `/guoba` 下。
+（如 [Orangezai](https://github.com/zhiyu1998/Orangezai)）、以及 **[JiuLi](https://gitee.com/fox-glaze/jiuli)**
+——TRSS 系靠能力而非名字识别，换名字的 fork 与兼容框架也会自动共享端口挂在 `/guoba` 下。
 
 装好后发 `#锅巴帮助` 看功能。
 
@@ -92,7 +92,7 @@ npm install express multer jsonwebtoken
 # 致谢
 
 - [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin) —— 原项目，作者 [@Zolay-Poi](https://gitee.com/zolay-poi)
-- [Yunzai-Bot](https://github.com/yoimiya-kokomi/Yunzai-Bot) / [Miao-Yunzai](https://github.com/yoimiya-kokomi/Miao-Yunzai) / [TRSS-Yunzai](https://github.com/TimeRainStarSky/Yunzai) —— 宿主框架
+- [Yunzai-Bot](https://github.com/yoimiya-kokomi/Yunzai-Bot) / [Miao-Yunzai](https://github.com/yoimiya-kokomi/Miao-Yunzai) / [TRSS-Yunzai](https://github.com/TimeRainStarSky/Yunzai) / [JiuLi](https://gitee.com/fox-glaze/jiuli) —— 宿主框架
 - [Ant Design Vue](https://antdv.com/) · [Vue3](https://vuejs.org/) · [Vite](https://vitejs.dev/) —— 前端基建
 
 # 开源协议
