@@ -12,8 +12,39 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ASN_DIR =
-  '/root/Yunzai/node_modules/.pnpm/@ant-design+icons-svg@4.5.0/node_modules/@ant-design/icons-svg/es/asn'
+/**
+ * 找 `@ant-design/icons-svg` 的 asn 目录。
+ *
+ * 别写死绝对路径 —— 插件装在云崽根、插件自己的 node_modules、还是 pnpm 的 .pnpm 仓，
+ * 各人不一样，写死一个路径换台机器就废。从脚本所在目录逐级往上找，两种布局都认。
+ */
+function findAsnDir() {
+  const pkg = path.join('@ant-design', 'icons-svg', 'es', 'asn')
+  let dir = path.dirname(fileURLToPath(import.meta.url))
+  for (let i = 0; i < 8; i++) {
+    const nm = path.join(dir, 'node_modules')
+    const plain = path.join(nm, pkg)
+    if (fs.existsSync(plain)) {
+      return plain
+    }
+    const pnpm = path.join(nm, '.pnpm')
+    if (fs.existsSync(pnpm)) {
+      const hit = fs.readdirSync(pnpm).find((n) => n.startsWith('@ant-design+icons-svg@'))
+      const inPnpm = hit && path.join(pnpm, hit, 'node_modules', pkg)
+      if (inPnpm && fs.existsSync(inPnpm)) {
+        return inPnpm
+      }
+    }
+    const up = path.dirname(dir)
+    if (up === dir) {
+      break
+    }
+    dir = up
+  }
+  return ''
+}
+
+const ASN_DIR = findAsnDir()
 
 /** iconify 名 → @ant-design/icons-svg 的模块名 */
 const ANTD_ICONS = {
@@ -100,6 +131,11 @@ function nodeToSvg(node) {
   const children = (node.children ?? []).map(nodeToSvg).join('')
   if (!children) return `<${node.tag}${attrs ? ' ' + attrs : ''}/>`
   return `<${node.tag}${attrs ? ' ' + attrs : ''}>${children}</${node.tag}>`
+}
+
+if (!ASN_DIR) {
+  console.error('找不到 @ant-design/icons-svg（图标源包）。先在项目里装依赖（pnpm i）再跑这个脚本。')
+  process.exit(1)
 }
 
 const icons = {}
