@@ -3,6 +3,7 @@ import moment from 'moment'
 import {Service} from '#guoba.framework'
 import {diskInfo} from '#guoba.libs'
 import {collect as collectHardware, warmup as warmupHardware} from './hardware.js'
+import {isFakeAccount} from '../../../../utils/account.js'
 
 /** 采样两次 /proc 计算 CPU 占用的间隔 */
 const CPU_SAMPLE_INTERVAL = 200
@@ -269,15 +270,23 @@ export class StatusService extends Service {
       if (this.#isBotAccount(value)) push(key)
     }
 
-    return uins.map((uin) => {
-      const bot = Bot?.bots?.[uin] ?? (String(Bot?.uin) === uin ? Bot : null)
-      return {
-        uin,
-        nickname: typeof bot?.nickname === 'string' ? bot.nickname : '',
-        /** 适配器名，多适配器混跑时用来区分账号来源 */
-        adapter: typeof bot?.adapter?.name === 'string' ? bot.adapter.name : '',
-      }
-    })
+    /**
+     * 伪账号不列出来（stdin、官bot 沙盒、JiuLi 的 mock 调试适配器，判据见 utils/account.js）。
+     *
+     * 用共享判据而不是就地写死 `uin !== 'mock'`：这类账号以后还会加，
+     * 判据散成两处必然漂移 —— 而且漏掉的那种会顶上「默认账号」，正是 mock 这次的下场。
+     */
+    return uins
+      .filter((uin) => !isFakeAccount(uin))
+      .map((uin) => {
+        const bot = Bot?.bots?.[uin] ?? (String(Bot?.uin) === uin ? Bot : null)
+        return {
+          uin,
+          nickname: typeof bot?.nickname === 'string' ? bot.nickname : '',
+          /** 适配器名，多适配器混跑时用来区分账号来源 */
+          adapter: typeof bot?.adapter?.name === 'string' ? bot.adapter.name : '',
+        }
+      })
   }
 
   /** 各 Bot 账号的今日 / 累计收发量 */

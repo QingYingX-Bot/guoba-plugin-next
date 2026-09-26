@@ -509,7 +509,13 @@ export default class ChatService extends Service {
     return msgs.map((it) => (it?.message ? {...it, message: flattenOneBot(it.message)} : it))
   }
 
-  /** 按 bot_id 取账号，不传就用默认的那个 */
+  /**
+   * 按 bot_id 取账号，不传就用默认的那个。
+   *
+   * 选到 mock（JiuLi 调试适配器）时**不要**偷偷换成真账号：mock 的 sendMsg 只写进内存数组，
+   * 真账号的会发到真群里 —— 用户在沙盒里试发一条，消息就跑到别人群里去了。
+   * 默认账号由 model/bots.js 的 listBots 把伪账号沉到末尾来保证（见 utils/account.js）。
+   */
   #bot(botId) {
     const uin = Number(botId) || botId
     return (uin && Bot.bots?.[uin]) || null
