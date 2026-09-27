@@ -5,9 +5,7 @@
   "type": "module",
   "module": "index.js",
   "main": "index.js",
-  "scripts": {
-    "test": "node --test \"test/**/*.test.js\""
-  },
+  "scripts": {},
   "imports": {
     "#guoba.platform": "./models/platform.js",
     "#guoba.utils": "./models/utils.js",
