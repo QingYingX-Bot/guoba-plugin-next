@@ -70,8 +70,19 @@ const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]|\x1B][^\x07\x1B]*(?:\x07|\x1B\\)/g
 const ANSI_SPLIT_RE = new RegExp(`(${ANSI_RE.source})`)
 /** 只有 SGR（`ESC[...m`）是颜色 / 字重，光标移动、清屏之类留着没用还会干扰前端 */
 const SGR_RE = /^\x1B\[[0-9;]*m$/
-/** log4js 的 pattern 是 `[%d{hh:mm:ss.SSS}][%4.4p]%m`，据此抠出时间和级别 */
-const HEAD_RE = /^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)]\[([A-Za-z]+)\s*]/
+/**
+ * 行首「时间 + 级别」的几种写法，按顺序试。
+ *
+ * 各宿主往 stdout 打的格式不一样，只认其中一种的话，另一种会**整段被当成同一条的续行**
+ * 并成一个条目，再撞上 MAX_ROWS_PER_ITEM 的截断 —— 看着就像日志丢了。
+ *
+ * - 云崽 / log4js：`[05:14:05.733][INFO] [来源] 正文`（pattern `[%d{hh:mm:ss.SSS}][%4.4p]%m`）
+ * - JiuLi：`05:14:05.733 INFO  [  JiuLi  ] 正文`（见 lib/core/log.js，级别是完整名字并补齐 5 位）
+ */
+const HEAD_PATTERNS = [
+  /^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)]\[([A-Za-z]+)\s*]/,
+  /^(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\s+([A-Za-z]{3,5})\s/,
+]
 /** `%4.4p` 把级别截成 4 个字符，这里还原回完整名字 */
 const LEVELS = {
   TRAC: 'trace',
@@ -81,6 +92,26 @@ const LEVELS = {
   ERRO: 'error',
   FATA: 'fatal',
   MARK: 'mark',
+}
+
+/**
+ * 试着从句首抠出「时间 + 级别」。
+ *
+ * 级别必须是 {@link LEVELS} 里认识的名字：`05:14:05.733 GET /api` 这种正文开头恰好
+ * 长得像时间的行（HTTP 日志之类）不能被误认成一条新日志，否则级别会被猜错、正文还会
+ * 丢掉一截。两级式的时间戳只在云崽上试完才轮到。
+ *
+ * @return {{time: string, level: string, length: number} | null}
+ */
+function matchHead(text) {
+  for (const re of HEAD_PATTERNS) {
+    const m = re.exec(text)
+    if (!m) continue
+    const level = m[2]
+    if (!LEVELS[level.toUpperCase().slice(0, 4)]) continue
+    return {time: m[1], level, length: m[0].length}
+  }
+  return null
 }
 
 function today() {
@@ -253,15 +284,15 @@ export default class LogService extends Service {
       text = text.slice(0, MAX_LINE_LEN) + ' …(已截断)'
       cut = true
     }
-    const head = HEAD_RE.exec(text)
+    const head = matchHead(text)
     let time = ''
     let level
     let cont = false
     let skip = 0
     if (head) {
-      time = head[1]
-      level = LEVELS[head[2].toUpperCase().slice(0, 4)] || 'info'
-      skip = head[0].length
+      time = head.time
+      level = LEVELS[head.level.toUpperCase().slice(0, 4)] || 'info'
+      skip = head.length
       text = text.slice(skip)
       this.#lastLevel = level
     } else {
