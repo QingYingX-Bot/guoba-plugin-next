@@ -8,6 +8,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
+import { ansiStyle, parseAnsi, type AnsiSpan } from '@/utils/ansi'
 import {
   apiTermExec,
   apiTermInterrupt,
@@ -45,6 +46,18 @@ const input = ref('')
 const follow = ref(true)
 const inflight = ref(false)
 const errMsg = ref('')
+
+/** 复用日志页的 ANSI 配色解析；行移出缓冲后，缓存随行对象一起释放。 */
+const spanCache = new WeakMap<TermLine, AnsiSpan[]>()
+
+function spansOf(line: TermLine) {
+  let spans = spanCache.get(line)
+  if (!spans) {
+    spans = parseAnsi(line.text)
+    spanCache.set(line, spans)
+  }
+  return spans
+}
 
 /** 命令历史，上下键翻 */
 const history = ref<string[]>([])
@@ -256,7 +269,7 @@ onBeforeUnmount(() => {
         class="g-term-line"
         :class="`is-${line.type}`"
       >
-        <span>{{ line.text }}</span>
+        <span v-for="(s, i) in spansOf(line)" :key="i" :style="ansiStyle(s)">{{ s.text }}</span>
       </div>
       <div v-if="!lines.length" class="g-term-empty">
         还没有输出，在下面输入命令，例如 <code>pwd</code> 或 <code>ls</code>
@@ -344,7 +357,8 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: var(--g-bg);
   border: 1px solid var(--g-border);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+  /* 优先覆盖箭头和制表符号的等宽字体，未安装时沿用系统终端字体。 */
+  font-family: 'DejaVu Sans Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
   font-size: 12px;
   line-height: 1.65;
   white-space: pre-wrap;
