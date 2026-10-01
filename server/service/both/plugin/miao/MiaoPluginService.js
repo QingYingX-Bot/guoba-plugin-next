@@ -374,7 +374,14 @@ export default class MiaoPluginService extends IMiaoPluginService {
    * 获取皮肤bg路径
    * @return {*}
    */
-  getThemeBgPath() {
+  getThemeBgPath(query) {
+    let {themeName} = (query || {})
+    if (themeName) {
+      let themeBgPath = path.join(this.miaoPath.themePath, themeName, 'bg.jpg')
+      if (fs.existsSync(themeBgPath)) {
+        return themeBgPath
+      }
+    }
     return path.join(this.miaoPath.themeDefaultPath, 'bg.jpg')
   }
 

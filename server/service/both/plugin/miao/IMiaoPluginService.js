@@ -82,8 +82,9 @@ export default class IMiaoPluginService extends Service {
 
   /**
    * 获取皮肤bg路径
+   * @param query 
    */
-  getThemeBgPath() {
+  getThemeBgPath(query) {
     throw Result.ERR_CODE_501
   }
 

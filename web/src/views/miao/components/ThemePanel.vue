@@ -1,20 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   Alert,
   Button,
   Card,
-  Col,
   Empty,
   Form,
   FormItem,
   Input,
   Modal,
   Popconfirm,
-  Row,
   Skeleton,
   Space,
   Tag,
+  Tooltip,
   Upload,
   message,
 } from 'ant-design-vue'
@@ -39,7 +38,10 @@ import type { MiaoThemeItem } from '@/types'
  * 里面必须有 main.png（底图），可选 config.js（配色覆盖）。
  * default 皮肤不允许修改或删除。
  */
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{
+  changed: []
+  preview: [payload: { theme: string; style: Record<string, any> }]
+}>()
 
 const auth = useAuthStore()
 
@@ -73,13 +75,14 @@ async function onImgError() {
 const current = computed(() => themes.value.find((t) => t.name === selected.value))
 const isDefault = computed(() => selected.value === 'default')
 
+// 侧栏窄，标签用短名，完整说法放 tooltip
 const styleFields = [
-  { key: 'fontColor', label: '标题字体色' },
-  { key: 'descColor', label: '描述字体色' },
-  { key: 'contBgColor', label: '内容背景色' },
-  { key: 'headerBgColor', label: '头部背景色' },
-  { key: 'rowBgColor1', label: '奇数行背景色' },
-  { key: 'rowBgColor2', label: '偶数行背景色' },
+  { key: 'fontColor', label: '标题色', hint: '标题字体色' },
+  { key: 'descColor', label: '描述色', hint: '描述字体色' },
+  { key: 'contBgColor', label: '内容底', hint: '内容背景色' },
+  { key: 'headerBgColor', label: '头部底', hint: '头部背景色' },
+  { key: 'rowBgColor1', label: '奇数行', hint: '奇数行背景色' },
+  { key: 'rowBgColor2', label: '偶数行', hint: '偶数行背景色' },
 ]
 
 function mainUrl(name: string) {
@@ -111,6 +114,18 @@ function select(name: string) {
   syncDraft()
 }
 
+/**
+ * 用深监听：配色输入框是直接改 styleDraft[key] 的，不走 select()。
+ */
+watch(
+  [selected, styleDraft],
+  () => {
+    if (!selected.value) return
+    emit('preview', { theme: selected.value, style: { ...styleDraft.value } })
+  },
+  { deep: true, immediate: true },
+)
+
 async function saveConfig() {
   if (isDefault.value) {
     message.warning('默认皮肤不可修改')
@@ -120,6 +135,8 @@ async function saveConfig() {
   try {
     await apiSaveMiaoThemeConfig(selected.value, styleDraft.value)
     await load()
+    // 配色变了，左边帮助图要重新取一次主题 config 才能看到效果
+    emit('changed')
   } finally {
     savingConfig.value = false
   }
@@ -189,6 +206,7 @@ async function replaceMain(file: File) {
     await apiPutMiaoTheme(fd)
     // 换图后 URL 不变，加时间戳强制刷新缓存
     imgTs.value = Date.now()
+    emit('changed')
   } finally {
     replacing.value = false
   }
@@ -208,14 +226,17 @@ onMounted(() => load(false))
   <Card :bordered="false" class="g-miao-card">
     <template #title><span class="g-miao-title">皮肤管理</span></template>
     <template #extra>
-      <Space>
-        <Button size="small" @click="addOpen = true">
-          <GIcon icon="ant-design:plus-outlined" :size="12" />
-          <span class="g-btn-text">新增皮肤</span>
-        </Button>
-        <Button size="small" :loading="loading" @click="load()">
-          <GIcon icon="ant-design:reload-outlined" :size="13" />
-        </Button>
+      <Space :size="6">
+        <Tooltip title="新增皮肤">
+          <Button size="small" @click="addOpen = true">
+            <GIcon icon="ant-design:plus-outlined" :size="12" />
+          </Button>
+        </Tooltip>
+        <Tooltip title="重新读取皮肤列表">
+          <Button size="small" :loading="loading" @click="load()">
+            <GIcon icon="ant-design:reload-outlined" :size="13" />
+          </Button>
+        </Tooltip>
       </Space>
     </template>
 
@@ -223,86 +244,81 @@ onMounted(() => load(false))
 
     <Empty v-else-if="!themes.length" description="没有找到任何皮肤" />
 
-    <Row v-else :gutter="16">
-      <Col :xs="24" :md="9" :lg="8">
-        <div class="g-theme-list">
-          <div
-            v-for="t in themes"
-            :key="t.name"
-            class="g-theme-item"
-            :class="{ 'is-active': t.name === selected }"
-            @click="select(t.name)"
-          >
-            <img :src="mainUrl(t.name)" alt="" class="g-theme-thumb" @error="onImgError" />
-            <div class="g-theme-info">
-              <span class="g-theme-name">{{ t.name }}</span>
-              <Tag v-if="t.name === 'default'" color="blue">默认</Tag>
-            </div>
-            <Popconfirm
-              v-if="t.name !== 'default'"
-              title="删除该皮肤目录？此操作不可恢复"
-              ok-text="删除"
-              cancel-text="取消"
-              @confirm="removeTheme(t.name)"
-            >
-              <Button type="text" danger size="small" @click.stop>
-                <GIcon icon="ant-design:delete-outlined" :size="12" />
-              </Button>
-            </Popconfirm>
+    <template v-else>
+      <div class="g-theme-list">
+        <div
+          v-for="t in themes"
+          :key="t.name"
+          class="g-theme-item"
+          :class="{ 'is-active': t.name === selected }"
+          @click="select(t.name)"
+        >
+          <img :src="mainUrl(t.name)" alt="" class="g-theme-thumb" @error="onImgError" />
+          <div class="g-theme-info">
+            <span class="g-theme-name">{{ t.name }}</span>
+            <Tag v-if="t.name === 'default'" color="blue">默认</Tag>
           </div>
+          <Popconfirm
+            v-if="t.name !== 'default'"
+            title="删除该皮肤目录？此操作不可恢复"
+            ok-text="删除"
+            cancel-text="取消"
+            @confirm="removeTheme(t.name)"
+          >
+            <Button type="text" danger size="small" @click.stop>
+              <GIcon icon="ant-design:delete-outlined" :size="12" />
+            </Button>
+          </Popconfirm>
         </div>
-      </Col>
+      </div>
 
-      <Col :xs="24" :md="15" :lg="16">
-        <template v-if="current">
-          <Alert
-            v-if="isDefault"
-            type="info"
-            show-icon
-            class="g-theme-alert"
-            message="默认皮肤不可修改或删除"
-            description="想调整配色，请新增一个皮肤后再改。"
-          />
+      <template v-if="current">
+        <Alert
+          v-if="isDefault"
+          type="info"
+          show-icon
+          class="g-theme-alert"
+          message="默认皮肤不可修改或删除"
+          description="想调整配色，请新增一个皮肤后再改。"
+        />
 
-          <div class="g-theme-preview">
-            <img :src="mainUrl(current.name)" alt="" class="g-theme-main" @error="onImgError" />
-            <Upload
-              v-if="!isDefault"
-              :before-upload="replaceMain"
-              :show-upload-list="false"
-              accept="image/png"
-            >
-              <Button :loading="replacing" class="g-theme-replace">
-                <GIcon icon="ant-design:picture-outlined" :size="13" />
+        <div class="g-theme-preview">
+          <img :src="mainUrl(current.name)" alt="" class="g-theme-main" @error="onImgError" />
+          <div v-if="!isDefault" class="g-theme-replace-slot">
+            <Upload :before-upload="replaceMain" :show-upload-list="false" accept="image/png">
+              <Button size="small" :loading="replacing">
+                <GIcon icon="ant-design:picture-outlined" :size="12" />
                 <span class="g-btn-text">更换底图</span>
               </Button>
             </Upload>
           </div>
+        </div>
 
-          <Form layout="vertical">
-            <Row :gutter="14">
-              <Col v-for="f in styleFields" :key="f.key" :xs="24" :sm="12">
-                <FormItem :label="f.label">
-                  <GColorPicker v-model:value="styleDraft[f.key]" :disabled="isDefault" />
-                </FormItem>
-              </Col>
-            </Row>
-          </Form>
+        <div class="g-theme-colors">
+          <div v-for="f in styleFields" :key="f.key" class="g-color-row">
+            <Tooltip :title="f.hint" placement="left">
+              <span class="g-color-label">{{ f.label }}</span>
+            </Tooltip>
+            <div class="g-color-field">
+              <GColorPicker v-model:value="styleDraft[f.key]" :disabled="isDefault" />
+            </div>
+          </div>
+        </div>
 
-          <Space>
-            <Button
-              type="primary"
-              :loading="savingConfig"
-              :disabled="isDefault"
-              @click="saveConfig"
-            >
-              保存配色
-            </Button>
-            <Button :disabled="isDefault" @click="syncDraft">重置</Button>
-          </Space>
-        </template>
-      </Col>
-    </Row>
+        <Space :size="8" class="g-theme-actions">
+          <Button
+            type="primary"
+            size="small"
+            :loading="savingConfig"
+            :disabled="isDefault"
+            @click="saveConfig"
+          >
+            保存配色
+          </Button>
+          <Button size="small" :disabled="isDefault" @click="syncDraft">重置</Button>
+        </Space>
+      </template>
+    </template>
 
     <Modal
       v-model:open="addOpen"
@@ -332,7 +348,7 @@ onMounted(() => load(false))
 
 <style scoped>
 .g-miao-card {
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 
 .g-miao-title {
@@ -340,19 +356,21 @@ onMounted(() => load(false))
   font-weight: 600;
 }
 
+/* 列表限高 */
 .g-theme-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 420px;
+  gap: 6px;
+  max-height: 168px;
   overflow: auto;
+  margin-bottom: 12px;
 }
 
 .g-theme-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px;
+  gap: 8px;
+  padding: 6px 8px;
   border: 1px solid var(--g-border);
   border-radius: 8px;
   cursor: pointer;
@@ -369,10 +387,11 @@ onMounted(() => load(false))
 }
 
 .g-theme-thumb {
-  width: 54px;
-  height: 34px;
+  width: 48px;
+  height: 30px;
   flex-shrink: 0;
   object-fit: cover;
+  object-position: top;
   border-radius: 4px;
   background: var(--g-bg-soft);
 }
@@ -393,27 +412,68 @@ onMounted(() => load(false))
 }
 
 .g-theme-alert {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+}
+
+.g-theme-alert :deep(.ant-alert-description) {
+  font-size: 12px;
 }
 
 .g-theme-preview {
   position: relative;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .g-theme-main {
+  display: block;
   width: 100%;
-  max-height: 220px;
+  max-height: 148px;
   object-fit: cover;
+  object-position: top;
   border: 1px solid var(--g-border);
   border-radius: 8px;
   background: var(--g-bg-soft);
 }
 
-.g-theme-replace {
+.g-theme-replace-slot {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
+  right: 8px;
+  bottom: 8px;
+}
+
+.g-theme-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.g-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.g-color-label {
+  flex: 0 0 52px;
+  font-size: 12px;
+  color: var(--g-text-dim);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.g-color-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.g-color-field :deep(.g-color) {
+  max-width: none;
+  width: 100%;
+}
+
+.g-theme-actions {
+  display: flex;
 }
 
 .g-file-name {

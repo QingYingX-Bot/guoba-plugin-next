@@ -1,0 +1,1 @@
+import{vt as e}from"./antd-DDoS7vB5.js";import{a as t,o as n,s as r}from"./index-GXJcnxPB.js";function i(){let i=r();return{brand:e(()=>i.isDark?t:n)}}export{i as t};

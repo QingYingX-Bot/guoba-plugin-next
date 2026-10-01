@@ -73,7 +73,7 @@ export const apiDeleteMiaoBackup = (id: string) =>
 
 /**
  * 皮肤底图/主图地址。
- * 这两个接口直接返回图片文件，所以拼成 URL 交给 <img> 用。
+ * 这两个接口直接返回图片文件，所以拼成 URL 交给 <img> / background 用。
  * 后端 TokenInterceptor 对 /api/plugin/miao/help/theme/* 允许弱令牌（liteToken），
  * 通过 query 传 token 即可。
  */
@@ -83,14 +83,18 @@ export function miaoThemeMainUrl(themeName: string, token: string, ts?: number) 
   return `${API_BASE}/plugin/miao/help/theme/main?${q.toString()}`
 }
 
-/** 底图（bg.jpg）固定取默认皮肤，后端忽略 themeName */
-export function miaoThemeBgUrl(token: string, ts?: number) {
-  const q = new URLSearchParams({ token })
+/**
+ * 底图（bg.jpg）。
+ */
+export function miaoThemeBgUrl(themeName: string, token: string, ts?: number) {
+  const q = new URLSearchParams({ themeName, token })
   if (ts) q.set('_t', String(ts))
   return `${API_BASE}/plugin/miao/help/theme/bg?${q.toString()}`
 }
 
-/** 帮助图标，注意此路径不在 liteToken 白名单内，需用正式 token */
+/**
+ * 帮助图标
+ */
 export function miaoHelpIconUrl(token: string, ts?: number) {
   const q = new URLSearchParams({ token })
   if (ts) q.set('_t', String(ts))

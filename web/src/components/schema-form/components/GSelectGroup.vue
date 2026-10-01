@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { Select, SelectOption, Spin } from 'ant-design-vue'
+import { Select, Spin } from 'ant-design-vue'
 import { apiQueryGroupList } from '@/api'
 
 /**

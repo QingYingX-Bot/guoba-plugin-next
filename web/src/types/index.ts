@@ -275,7 +275,9 @@ export interface FsTreeNode {
 /** 帮助配置里的样式部分 */
 export interface MiaoHelpStyle {
   fontColor?: string
+  fontShadow?: string
   descColor?: string
+  descShadow?: string
   contBgColor?: string
   contBgBlur?: number
   headerBgColor?: string
@@ -288,12 +290,11 @@ export interface MiaoHelpStyle {
 export interface MiaoHelpCfgBody {
   title?: string
   subTitle?: string
-  columnCount?: number
+  colCount?: number
   colWidth?: number
   /** 'all' 或皮肤名数组 */
   theme?: string | string[]
   themeExclude?: string[]
-  style?: MiaoHelpStyle
   bgBlur?: boolean
   [key: string]: any
 }
@@ -309,6 +310,7 @@ export interface MiaoHelpItem {
 /** 帮助列表中的一个分组 */
 export interface MiaoHelpGroup {
   group?: string
+  auth?: string
   list?: MiaoHelpItem[]
   [key: string]: any
 }

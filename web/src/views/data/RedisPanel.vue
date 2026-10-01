@@ -18,7 +18,6 @@ import {
   Table,
   Tag,
   Textarea,
-  Tooltip,
   message,
 } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
