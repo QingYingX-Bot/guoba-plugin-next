@@ -1,1 +1,0 @@
-import{bx as e,bw as n,ay as i}from"./index.js";function useWindowSizeFn(s,t=150,o){let handler=()=>{s()};const r=i(handler,t);handler=r;const start=()=>{o&&o.immediate&&handler(),window.addEventListener("resize",handler)},stop=()=>{window.removeEventListener("resize",handler)};return e((()=>{start()})),n((()=>{stop()})),[start,stop]}export{useWindowSizeFn as u};

@@ -1,1 +1,0 @@
-import{a,dA as e,N as u,A as s,bt as l,n as t,ae as n,D as o,aq as v}from"./index.js";function useRuleFormItem(m,r="value",i="change",c){const d=v(),f=null==d?void 0:d.emit,g=a({value:m[r]}),p=e(g);u((()=>{g.value=m[r]}));return[s({get:()=>g.value,set(a){l(a,p.value)||(g.value=a,t((()=>{null==f||f(i,a,...n(o(c))||[])})))}}),a=>{g.value=a},p]}export{useRuleFormItem as u};
