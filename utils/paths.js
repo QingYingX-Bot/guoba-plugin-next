@@ -49,7 +49,7 @@ function initPaths() {
   // Guoba插件根目录：优先用自身路径推导，避免依赖 CWD
   const pluginRoot = pluginRootFromSelf
   // Guoba静态资源路径
-  const staticPath = resolveStaticPath(pluginRoot)
+  const staticPath = path.join(pluginRoot, 'server/static')
   // 插件资源目录
   const pluginResources = path.join(pluginRoot, 'resources')
 
@@ -67,18 +67,6 @@ function initPaths() {
       realMountPrefix: "/guoba-plugin-mock-root"
     },
   }
-}
-
-/**
- * 选择前端静态目录。
- * 只有当 static-next 里确实有 index.html 时才启用，避免半成品目录导致白屏。
- */
-function resolveStaticPath(pluginRoot) {
-  const next = path.join(pluginRoot, 'server/static-next')
-  if (fs.existsSync(path.join(next, 'index.html'))) {
-    return next
-  }
-  return path.join(pluginRoot, 'server/static')
 }
 
 /**

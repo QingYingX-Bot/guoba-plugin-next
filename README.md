@@ -82,7 +82,7 @@ npm install express multer jsonwebtoken
 
 ## 前端开发
 
-前端在 `web/`，`pnpm dev` 起开发服务器，`pnpm build` 产物输出到 `server/static-next/`。
+前端在 `web/`，`pnpm dev` 起开发服务器，`pnpm build` 产物输出到 `server/static/`。
 
 # 免责声明
 

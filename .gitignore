@@ -127,4 +127,3 @@ dist
 *.test.mjs
 *.spec.js
 *.spec.mjs
-/server/static/preload
