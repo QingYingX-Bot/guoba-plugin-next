@@ -49,11 +49,18 @@ export const apiGetMiaoThemeConfig = (themeName: string) =>
 export const apiSaveMiaoThemeConfig = (themeName: string, config: any) =>
   post('/plugin/miao/help/theme/config', { themeName, config }, { showSuccess: true })
 
-/** 新增皮肤，FormData 需含 themeName 与 main.png 文件 */
+/**
+ * 新增皮肤。FormData 需含 themeName，以及图片文件 —— 按字段名区分落盘位置：
+ *   main → main.png（必需）    bg → bg.jpg（可选，不传则出图沿用 default 的）
+ */
 export const apiAddMiaoTheme = (formData: FormData) =>
   post('/plugin/miao/help/theme/action', formData, { showSuccess: true })
 
-/** 修改皮肤底图，FormData 需含 themeName 与 main.png 文件 */
+/**
+ * 修改皮肤。两种用法：
+ *   带图片 → 换图，字段名同上（main / bg）
+ *   只带 resetBg=1 → 删掉自定义 bg.jpg，出图回落到 default
+ */
 export const apiPutMiaoTheme = (formData: FormData) =>
   post('/plugin/miao/help/theme/action_put', formData, { showSuccess: true })
 

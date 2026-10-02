@@ -329,6 +329,7 @@ export interface MiaoHelpCfg {
 export interface MiaoThemeItem {
   name: string
   style?: Record<string, any>
+  hasBg?: boolean
   [key: string]: any
 }
 

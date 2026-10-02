@@ -8,6 +8,7 @@ import {
   Form,
   FormItem,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Skeleton,
@@ -25,6 +26,7 @@ import {
   apiGetMiaoThemeList,
   apiPutMiaoTheme,
   apiSaveMiaoThemeConfig,
+  miaoThemeBgUrl,
   miaoThemeMainUrl,
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -34,10 +36,17 @@ import type { MiaoThemeItem } from '@/types'
 /**
  * 皮肤管理。
  *
- * 一个皮肤就是 miao-plugin/resources/help/theme/<name>/ 目录，
- * 里面必须有 main.png（底图），可选 config.js（配色覆盖）。
+ * 一个皮肤就是 miao-plugin/resources/help/theme/<name>/ 目录：
+ *   main.png   头图（必需，没有它这个目录根本不会被 HelpTheme 认成皮肤）
+ *   bg.jpg     背景底图（可选，缺了回落到 default/bg.jpg）
+ *   config.js  style 对象
  * default 皮肤不允许修改或删除。
  */
+const props = defineProps<{
+  /** helpCfg.bgBlur —— 关掉时 HelpTheme 直接输出 backdrop-filter:none，毛玻璃那一项就没意义了 */
+  bgBlur?: boolean
+}>()
+
 const emit = defineEmits<{
   changed: []
   preview: [payload: { theme: string; style: Record<string, any> }]
@@ -56,9 +65,10 @@ const styleDraft = ref<Record<string, any>>({})
 const addOpen = ref(false)
 const addName = ref('')
 const addFile = ref<File | null>(null)
+const addBgFile = ref<File | null>(null)
 const adding = ref(false)
 
-const replacing = ref(false)
+const replacing = ref<'' | 'main' | 'bg'>('')
 
 /**
  * 图片加载失败自处理：liteToken 会随服务重启失效，旧页面拿旧 token 请求图片会 401 裂图。
@@ -77,16 +87,37 @@ const isDefault = computed(() => selected.value === 'default')
 
 // 侧栏窄，标签用短名，完整说法放 tooltip
 const styleFields = [
-  { key: 'fontColor', label: '标题色', hint: '标题字体色' },
-  { key: 'descColor', label: '描述色', hint: '描述字体色' },
-  { key: 'contBgColor', label: '内容底', hint: '内容背景色' },
-  { key: 'headerBgColor', label: '头部底', hint: '头部背景色' },
-  { key: 'rowBgColor1', label: '奇数行', hint: '奇数行背景色' },
-  { key: 'rowBgColor2', label: '偶数行', hint: '偶数行背景色' },
+  { key: 'fontColor', label: '标题色', type: 'color', hint: '标题字体色（.help-title / .help-group）' },
+  { key: 'fontShadow', label: '标题影', type: 'text', hint: '标题文字阴影，CSS text-shadow，如 0px 0px 1px rgba(6,21,31,.9)；none 为不投影' },
+  { key: 'descColor', label: '描述色', type: 'color', hint: '描述字体色（.help-desc）' },
+  { key: 'descShadow', label: '描述影', type: 'text', hint: '描述文字阴影，CSS text-shadow；none 为不投影' },
+  { key: 'contBgColor', label: '内容底', type: 'color', hint: '面板整体底色（.cont-box），叠在标题栏和帮助行之下' },
+  { key: 'contBgBlur', label: '毛玻璃', type: 'number', hint: '面板底图毛玻璃模糊半径 0-10；「帮助设置」里关掉 bgBlur 时这项不生效' },
+  { key: 'headerBgColor', label: '头部底', type: 'color', hint: '板块标题栏底色（.help-group）' },
+  { key: 'rowBgColor1', label: '奇数行', type: 'color', hint: '帮助表奇数行底色' },
+  { key: 'rowBgColor2', label: '偶数行', type: 'color', hint: '帮助表偶数行底色' },
 ]
+
+const STYLE_DEFAULTS: Record<string, any> = {
+  fontColor: '#ceb78b',
+  fontShadow: 'none',
+  descColor: '#eee',
+  descShadow: 'none',
+  contBgColor: 'rgba(43, 52, 61, 0.8)',
+  contBgBlur: 3,
+  headerBgColor: 'rgba(34, 41, 51, .4)',
+  rowBgColor1: 'rgba(34, 41, 51, .2)',
+  rowBgColor2: 'rgba(34, 41, 51, .4)',
+}
+
+const blurDisabled = computed(() => props.bgBlur === false)
 
 function mainUrl(name: string) {
   return miaoThemeMainUrl(name, auth.liteToken || auth.token, imgTs.value)
+}
+
+function bgUrl(name: string) {
+  return miaoThemeBgUrl(name, auth.liteToken || auth.token, imgTs.value)
 }
 
 async function load(keepSelection = true) {
@@ -106,7 +137,13 @@ async function load(keepSelection = true) {
 }
 
 function syncDraft() {
-  styleDraft.value = structuredCloneSafe(current.value?.style ?? {})
+  let draft: Record<string, any> = structuredCloneSafe(current.value?.style ?? {})
+  for (let f of styleFields) {
+    if (draft[f.key] === undefined) {
+      draft[f.key] = STYLE_DEFAULTS[f.key]
+    }
+  }
+  styleDraft.value = draft
 }
 
 function select(name: string) {
@@ -142,12 +179,20 @@ async function saveConfig() {
   }
 }
 
-function beforeAddFile(file: File) {
-  if (!/\.png$/i.test(file.name)) {
-    message.warning('底图需要是 png 格式')
+function beforeAddFile(file: File, target: 'main' | 'bg') {
+  if (target === 'main' && !/\.png$/i.test(file.name)) {
+    message.warning('头图需要是 png 格式')
     return false
   }
-  addFile.value = file
+  if (target === 'bg' && !/\.jpe?g$/i.test(file.name)) {
+    message.warning('背景底图需要是 jpg 格式（miao 固定读 bg.jpg）')
+    return false
+  }
+  if (target === 'bg') {
+    addBgFile.value = file
+  } else {
+    addFile.value = file
+  }
   return false
 }
 
@@ -166,7 +211,7 @@ async function doAdd() {
     return
   }
   if (!addFile.value) {
-    message.warning('请选择底图 main.png')
+    message.warning('请选择头图 main.png')
     return
   }
 
@@ -174,11 +219,15 @@ async function doAdd() {
   try {
     const fd = new FormData()
     fd.append('themeName', name)
-    fd.append('file', addFile.value, 'main.png')
+    fd.append('main', addFile.value, 'main.png')
+    if (addBgFile.value) {
+      fd.append('bg', addBgFile.value, 'bg.jpg')
+    }
     await apiAddMiaoTheme(fd)
     addOpen.value = false
     addName.value = ''
     addFile.value = null
+    addBgFile.value = null
     imgTs.value = Date.now()
     await load(false)
     selected.value = name
@@ -189,28 +238,43 @@ async function doAdd() {
   }
 }
 
-async function replaceMain(file: File) {
+async function replaceImage(file: File, target: 'main' | 'bg') {
   if (isDefault.value) {
     message.warning('默认皮肤不可修改')
     return false
   }
-  if (!/\.png$/i.test(file.name)) {
-    message.warning('底图需要是 png 格式')
+  if (target === 'main' && !/\.png$/i.test(file.name)) {
+    message.warning('头图需要是 png 格式')
     return false
   }
-  replacing.value = true
+  if (target === 'bg' && !/\.jpe?g$/i.test(file.name)) {
+    message.warning('背景底图需要是 jpg 格式（miao 固定读 bg.jpg）')
+    return false
+  }
+  replacing.value = target
   try {
     const fd = new FormData()
     fd.append('themeName', selected.value)
-    fd.append('file', file, 'main.png')
+    fd.append(target, file, target === 'bg' ? 'bg.jpg' : 'main.png')
     await apiPutMiaoTheme(fd)
     // 换图后 URL 不变，加时间戳强制刷新缓存
     imgTs.value = Date.now()
+    await load()
     emit('changed')
   } finally {
-    replacing.value = false
+    replacing.value = ''
   }
   return false
+}
+
+async function resetBg() {
+  const fd = new FormData()
+  fd.append('themeName', selected.value)
+  fd.append('resetBg', '1')
+  await apiPutMiaoTheme(fd)
+  imgTs.value = Date.now()
+  await load()
+  emit('changed')
 }
 
 async function removeTheme(name: string) {
@@ -282,15 +346,56 @@ onMounted(() => load(false))
           description="想调整配色，请新增一个皮肤后再改。"
         />
 
-        <div class="g-theme-preview">
-          <img :src="mainUrl(current.name)" alt="" class="g-theme-main" @error="onImgError" />
-          <div v-if="!isDefault" class="g-theme-replace-slot">
-            <Upload :before-upload="replaceMain" :show-upload-list="false" accept="image/png">
-              <Button size="small" :loading="replacing">
-                <GIcon icon="ant-design:picture-outlined" :size="12" />
-                <span class="g-btn-text">更换底图</span>
-              </Button>
-            </Upload>
+        <!-- 一个皮肤两张图：头图铺在 .container 上，背景铺在 body 上并平铺 -->
+        <div class="g-theme-images">
+          <div class="g-theme-imgbox">
+            <img :src="mainUrl(current.name)" alt="" class="g-theme-main" @error="onImgError" />
+            <span class="g-theme-imgtag">头图 main.png</span>
+            <div v-if="!isDefault" class="g-theme-replace-slot">
+              <Upload
+                :before-upload="(f: File) => replaceImage(f, 'main')"
+                :show-upload-list="false"
+                accept="image/png"
+              >
+                <Button size="small" :loading="replacing === 'main'">
+                  <GIcon icon="ant-design:picture-outlined" :size="12" />
+                  <span class="g-btn-text">更换头图</span>
+                </Button>
+              </Upload>
+            </div>
+          </div>
+
+          <div class="g-theme-imgbox is-bg">
+            <img :src="bgUrl(current.name)" alt="" class="g-theme-bg" @error="onImgError" />
+            <span class="g-theme-imgtag">
+              背景 bg.jpg
+              <em v-if="!current.hasBg" class="g-theme-fallback">沿用 default</em>
+            </span>
+            <div v-if="!isDefault" class="g-theme-replace-slot">
+              <Upload
+                :before-upload="(f: File) => replaceImage(f, 'bg')"
+                :show-upload-list="false"
+                accept="image/jpeg"
+              >
+                <Button size="small" :loading="replacing === 'bg'">
+                  <GIcon icon="ant-design:bg-colors-outlined" :size="12" />
+                  <span class="g-btn-text">更换背景</span>
+                </Button>
+              </Upload>
+              <Popconfirm
+                v-if="current.hasBg"
+                title="删掉这张背景，回落到 default 的 bg.jpg？"
+                ok-text="恢复"
+                cancel-text="取消"
+                @confirm="resetBg"
+              >
+                <Tooltip title="删掉自定义背景，回到 default">
+                  <Button size="small">
+                    <GIcon icon="ant-design:undo-outlined" :size="12" />
+                  </Button>
+                </Tooltip>
+              </Popconfirm>
+            </div>
           </div>
         </div>
 
@@ -300,7 +405,21 @@ onMounted(() => load(false))
               <span class="g-color-label">{{ f.label }}</span>
             </Tooltip>
             <div class="g-color-field">
-              <GColorPicker v-model:value="styleDraft[f.key]" :disabled="isDefault" />
+              <GColorPicker
+                v-if="f.type === 'color'"
+                v-model:value="styleDraft[f.key]"
+                :disabled="isDefault"
+              />
+              <InputNumber
+                v-else-if="f.type === 'number'"
+                v-model:value="styleDraft[f.key]"
+                :min="0"
+                :max="10"
+                :step="0.5"
+                :disabled="isDefault || blurDisabled"
+                class="g-blur-input"
+              />
+              <Input v-else v-model:value="styleDraft[f.key]" :disabled="isDefault" placeholder="none" />
             </div>
           </div>
         </div>
@@ -332,14 +451,31 @@ onMounted(() => load(false))
         <FormItem label="皮肤名称" extra="将作为 resources/help/theme 下的目录名">
           <Input v-model:value="addName" placeholder="例如 mytheme" allowClear />
         </FormItem>
-        <FormItem label="底图（main.png）">
-          <Upload :before-upload="beforeAddFile" :show-upload-list="false" accept="image/png">
+        <FormItem label="头图（main.png）" extra="必需。铺在帮助图容器上，也是这个皮肤被识别的凭据">
+          <Upload
+            :before-upload="(f: File) => beforeAddFile(f, 'main')"
+            :show-upload-list="false"
+            accept="image/png"
+          >
             <Button>
               <GIcon icon="ant-design:upload-outlined" :size="13" />
               <span class="g-btn-text">选择图片</span>
             </Button>
           </Upload>
           <p v-if="addFile" class="g-file-name">已选择：{{ addFile.name }}</p>
+        </FormItem>
+        <FormItem label="背景底图（bg.jpg）" extra="可选。铺在整页背景上并平铺；不传就沿用 default 的">
+          <Upload
+            :before-upload="(f: File) => beforeAddFile(f, 'bg')"
+            :show-upload-list="false"
+            accept="image/jpeg"
+          >
+            <Button>
+              <GIcon icon="ant-design:upload-outlined" :size="13" />
+              <span class="g-btn-text">选择图片</span>
+            </Button>
+          </Upload>
+          <p v-if="addBgFile" class="g-file-name">已选择：{{ addBgFile.name }}</p>
         </FormItem>
       </Form>
     </Modal>
@@ -419,26 +555,65 @@ onMounted(() => load(false))
   font-size: 12px;
 }
 
-.g-theme-preview {
-  position: relative;
+.g-theme-images {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 12px;
+}
+
+.g-theme-imgbox {
+  position: relative;
+  border: 1px solid var(--g-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--g-bg-soft);
 }
 
 .g-theme-main {
   display: block;
   width: 100%;
-  max-height: 148px;
+  height: 120px;
   object-fit: cover;
   object-position: top;
-  border: 1px solid var(--g-border);
-  border-radius: 8px;
-  background: var(--g-bg-soft);
+}
+
+.g-theme-bg {
+  display: block;
+  width: 100%;
+  height: 64px;
+  object-fit: none;
+  object-position: 0 0;
+}
+
+.g-theme-imgtag {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.g-theme-fallback {
+  font-style: normal;
+  opacity: 0.75;
 }
 
 .g-theme-replace-slot {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.g-blur-input {
+  width: 100%;
 }
 
 .g-theme-colors {

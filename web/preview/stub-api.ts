@@ -56,6 +56,7 @@ const helpList: MiaoHelpGroup[] = [
 const themes: MiaoThemeItem[] = [
   {
     name: 'test',
+    hasBg: false,
     style: {
       fontColor: '#ffa600',
       descColor: '#ff0000',
@@ -67,6 +68,7 @@ const themes: MiaoThemeItem[] = [
   },
   {
     name: 'default',
+    hasBg: true,
     style: {
       fontColor: '#ceb78b',
       descColor: '#eee',

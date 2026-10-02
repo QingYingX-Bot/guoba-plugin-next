@@ -196,7 +196,11 @@ onMounted(() => load())
         </div>
 
         <div class="g-miao-col g-miao-aside">
-          <ThemePanel @changed="onThemeChanged" @preview="onPreviewTheme" />
+          <ThemePanel
+            :bg-blur="helpCfg.bgBlur"
+            @changed="onThemeChanged"
+            @preview="onPreviewTheme"
+          />
         </div>
       </div>
 
