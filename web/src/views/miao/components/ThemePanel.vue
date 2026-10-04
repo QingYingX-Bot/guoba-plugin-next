@@ -53,6 +53,7 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
+const IMG_ACCEPT = '.png,.jpg,.jpeg,.jpe,.webp,.gif,.avif'
 
 const loading = ref(true)
 const themes = ref<MiaoThemeItem[]>([])
@@ -180,14 +181,6 @@ async function saveConfig() {
 }
 
 function beforeAddFile(file: File, target: 'main' | 'bg') {
-  if (target === 'main' && !/\.png$/i.test(file.name)) {
-    message.warning('头图需要是 png 格式')
-    return false
-  }
-  if (target === 'bg' && !/\.jpe?g$/i.test(file.name)) {
-    message.warning('背景底图需要是 jpg 格式（miao 固定读 bg.jpg）')
-    return false
-  }
   if (target === 'bg') {
     addBgFile.value = file
   } else {
@@ -241,14 +234,6 @@ async function doAdd() {
 async function replaceImage(file: File, target: 'main' | 'bg') {
   if (isDefault.value) {
     message.warning('默认皮肤不可修改')
-    return false
-  }
-  if (target === 'main' && !/\.png$/i.test(file.name)) {
-    message.warning('头图需要是 png 格式')
-    return false
-  }
-  if (target === 'bg' && !/\.jpe?g$/i.test(file.name)) {
-    message.warning('背景底图需要是 jpg 格式（miao 固定读 bg.jpg）')
     return false
   }
   replacing.value = target
@@ -355,7 +340,7 @@ onMounted(() => load(false))
               <Upload
                 :before-upload="(f: File) => replaceImage(f, 'main')"
                 :show-upload-list="false"
-                accept="image/png"
+                :accept="IMG_ACCEPT"
               >
                 <Button size="small" :loading="replacing === 'main'">
                   <GIcon icon="ant-design:picture-outlined" :size="12" />
@@ -375,7 +360,7 @@ onMounted(() => load(false))
               <Upload
                 :before-upload="(f: File) => replaceImage(f, 'bg')"
                 :show-upload-list="false"
-                accept="image/jpeg"
+                :accept="IMG_ACCEPT"
               >
                 <Button size="small" :loading="replacing === 'bg'">
                   <GIcon icon="ant-design:bg-colors-outlined" :size="12" />
@@ -455,7 +440,7 @@ onMounted(() => load(false))
           <Upload
             :before-upload="(f: File) => beforeAddFile(f, 'main')"
             :show-upload-list="false"
-            accept="image/png"
+            :accept="IMG_ACCEPT"
           >
             <Button>
               <GIcon icon="ant-design:upload-outlined" :size="13" />
@@ -468,7 +453,7 @@ onMounted(() => load(false))
           <Upload
             :before-upload="(f: File) => beforeAddFile(f, 'bg')"
             :show-upload-list="false"
-            accept="image/jpeg"
+            :accept="IMG_ACCEPT"
           >
             <Button>
               <GIcon icon="ant-design:upload-outlined" :size="13" />
