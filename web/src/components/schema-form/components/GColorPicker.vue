@@ -14,10 +14,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:value': [string] }>()
 
-/** <input type="color"> 只认 #rrggbb，其他格式（rgba 等）就不回填色板 */
+const HEX6 = /^#[0-9a-fA-F]{6}$/
+
+/**
+ * <input type="color"> 只认 #rrggbb，其他格式（rgba 等）不回填色板。
+ */
 const swatch = computed(() => {
   const val = props.value ?? ''
-  return /^#[0-9a-fA-F]{6}$/.test(val) ? val : '#000000'
+  if (HEX6.test(val)) return val
+  const hint = props.placeholder ?? ''
+  return HEX6.test(hint) ? hint : '#000000'
 })
 
 function onSwatch(e: Event) {

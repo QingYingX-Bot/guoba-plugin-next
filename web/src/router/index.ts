@@ -34,6 +34,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '配置管理', icon: 'ant-design:setting-outlined' },
       },
       {
+        path: 'theme',
+        name: 'Theme',
+        component: () => import('@/views/theme/index.vue'),
+        meta: { title: '外观设置', icon: 'ant-design:bulb-outlined' },
+      },
+      {
         path: 'chat',
         name: 'Chat',
         component: () => import('@/views/chat/index.vue'),

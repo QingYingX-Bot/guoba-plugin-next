@@ -192,6 +192,7 @@ const userMenu = () =>
   padding: 0 16px 0 8px;
   line-height: 56px;
   border-bottom: 1px solid var(--g-border);
+  background: var(--g-bg-header);
   flex-shrink: 0;
 }
 

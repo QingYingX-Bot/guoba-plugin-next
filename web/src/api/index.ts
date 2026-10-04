@@ -1,6 +1,7 @@
 import { del, get, post, put, type RequestOptions } from './request'
 import { API_BASE } from '@/utils/env'
 import type { DeviceCredential } from '@/utils/device'
+import type { ThemePayload, ThemeSettings } from '@/theme/config'
 import type {
   ConfigTab,
   FsTreeNode,
@@ -280,6 +281,22 @@ export const apiGetFsTreeChildren = (path: string) =>
 
 export const apiCreateDir = (path: string, name: string) =>
   put('/sys/fs/create-dir', { path, name }, { showSuccess: true })
+
+/* ---------------- 外观主题 ---------------- */
+
+/**
+ * 面板外观主题，存在 config/application.yaml 的 theme 段，首屏由 preload 注入。
+ */
+export const apiGetTheme = () =>
+  get<Partial<ThemeSettings>>('/theme', undefined, { showError: false })
+
+export const apiSaveTheme = (body: ThemePayload) => put<Partial<ThemeSettings>>('/theme', body)
+
+/**
+ * 上传自定义背景图
+ */
+export const apiUploadThemeBackground = (formData: FormData) =>
+  post<{ name: string }>('/theme/background', formData)
 
 /* ---------------- QQ 好友 / 群 ---------------- */
 

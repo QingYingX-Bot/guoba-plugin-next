@@ -6,6 +6,7 @@ import {_paths, cfg, Constant} from "#guoba.platform";
 const liteInclude = [
   new RegExp('^/api/plugin/miao/help/theme/.+'),
   new RegExp('^/api/custom-page/asset/[^/]+/.+'),
+  new RegExp('^/api/theme/background/image$'),
 ]
 
 // 需要拦截的路径
