@@ -5,19 +5,21 @@
  * key 列表用 SCAN 游标翻页（后端同样走 SCAN，不用 KEYS，
  * 避免 key 多时阻塞 Redis）。所以只有「加载更多」，没有跳页。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Button,
   Empty,
   Input,
   InputNumber,
   Modal,
+  Segmented,
   Select,
   SelectOption,
   Spin,
   Table,
   Tag,
   Textarea,
+  Tree,
   message,
 } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
@@ -29,6 +31,7 @@ import {
   apiRedisScan,
   apiRedisSet,
   type RedisKeyItem,
+  type RedisKeyType,
   type RedisValue,
 } from '@/api'
 
@@ -80,8 +83,116 @@ const columns = [
   { title: 'Key', dataIndex: 'key', key: 'key', ellipsis: true },
   { title: '类型', dataIndex: 'type', key: 'type', width: 90 },
   { title: 'TTL', dataIndex: 'ttl', key: 'ttl', width: 110 },
-  { title: '', key: 'action', width: 130 },
+  { title: '', key: 'action', width: 70 },
 ]
+
+/* ---------------- 目录树视图 ---------------- */
+
+type ViewMode = 'list' | 'tree'
+
+interface RedisTreeNode {
+  title: string
+  key: string
+  children?: RedisTreeNode[]
+  redisKey?: string
+  type?: RedisKeyType
+  ttl?: number
+}
+
+const VIEW_KEY = 'guoba-redis-view'
+
+const viewMode = ref<ViewMode>(localStorage.getItem(VIEW_KEY) === 'tree' ? 'tree' : 'list')
+const expandedKeys = ref<string[]>([])
+const winHeight = ref(window.innerHeight)
+
+function setViewMode(mode: ViewMode) {
+  viewMode.value = mode
+  localStorage.setItem(VIEW_KEY, mode)
+}
+
+const VIEW_OPTIONS = [
+  {
+    value: 'list',
+    label: () => h('span', { class: 'g-view-label' }, [
+      h(GIcon, { icon: 'ant-design:unordered-list-outlined', size: 14 }),
+      h('span', { class: 'g-view-text' }, '列表'),
+    ]),
+  },
+  {
+    value: 'tree',
+    label: () => h('span', { class: 'g-view-label' }, [
+      h(GIcon, { icon: 'ant-design:folder-outlined', size: 14 }),
+      h('span', { class: 'g-view-text' }, '目录树'),
+    ]),
+  },
+]
+
+const treeHeight = computed(() => Math.max(240, winHeight.value - 305))
+
+const treeSelectedKeys = computed(() => (detail.value ? [detail.value.key] : []))
+
+/** 已加载的 key 按 `:` 拆成分层结构 */
+const treeData = computed<RedisTreeNode[]>(() => {
+  const byPath = new Map<string, RedisTreeNode>()
+  const roots: RedisTreeNode[] = []
+  for (const item of items.value) {
+    const parts = item.key.split(':')
+    let path = ''
+    let node: RedisTreeNode | undefined
+    let parent: RedisTreeNode | undefined
+    for (let i = 0; i < parts.length; i++) {
+      path = i === 0 ? parts[i] : `${path}:${parts[i]}`
+      node = byPath.get(path)
+      if (!node) {
+        node = { title: parts[i], key: path, children: [] }
+        byPath.set(path, node)
+        if (parent) parent.children!.push(node)
+        else roots.push(node)
+      }
+      parent = node
+    }
+    if (node) {
+      node.redisKey = item.key
+      node.type = item.type
+      node.ttl = item.ttl
+    }
+  }
+  sortTree(roots)
+  return roots
+})
+
+function sortTree(nodes: RedisTreeNode[]) {
+  nodes.sort((a, b) => {
+    const dir = (a.children?.length ? 0 : 1) - (b.children?.length ? 0 : 1)
+    return dir || a.title.localeCompare(b.title)
+  })
+  nodes.forEach((n) => {
+    if (n.children?.length) sortTree(n.children)
+  })
+}
+
+function expandAllTree() {
+  const keys: string[] = []
+  const walk = (nodes: RedisTreeNode[]) => {
+    nodes.forEach((n) => {
+      if (n.children?.length) {
+        keys.push(n.key)
+        walk(n.children)
+      }
+    })
+  }
+  walk(treeData.value)
+  expandedKeys.value = keys
+}
+
+function onTreeSelect(_keys: any, info: any) {
+  const node = info.node as RedisTreeNode
+  if (node.redisKey) openDetail(node.redisKey)
+}
+
+function syncWinHeight() {
+  winHeight.value = window.innerHeight
+}
 
 function ttlText(ttl: number) {
   if (ttl === -1) return '永不过期'
@@ -127,6 +238,11 @@ async function scan(reset = true) {
     items.value = reset ? data.items : [...items.value, ...data.items]
     cursor.value = data.cursor
     scanned.value = true
+    if (reset) {
+      expandedKeys.value = treeData.value
+        .filter((n) => n.children?.length)
+        .map((n) => n.key)
+    }
   } finally {
     loading.value = false
     loadingMore.value = false
@@ -257,6 +373,11 @@ async function runCommand() {
 onMounted(() => {
   loadInfo()
   scan(true)
+  window.addEventListener('resize', syncWinHeight)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncWinHeight)
 })
 </script>
 
@@ -294,7 +415,7 @@ onMounted(() => {
       </Button>
 
       <Button
-        v-if="selectedKeys.length"
+        v-if="viewMode === 'list' && selectedKeys.length"
         danger
         @click="confirmDel(selectedKeys)"
       >
@@ -302,16 +423,26 @@ onMounted(() => {
         <span class="g-btn-text">删除选中 ({{ selectedKeys.length }})</span>
       </Button>
 
-      <div class="g-toolbar-info" v-if="info">
-        共 {{ info.dbSize }} 个 key
-        <template v-if="info.memory"> · 占用 {{ info.memory }}</template>
+      <div class="g-toolbar-right">
+        <Segmented
+          :value="viewMode"
+          :options="VIEW_OPTIONS"
+          size="small"
+          @change="(v: any) => setViewMode(v)"
+        />
+
+        <div class="g-toolbar-info" v-if="info">
+          共 {{ info.dbSize }} 个 key
+          <template v-if="info.memory"> · 占用 {{ info.memory }}</template>
+        </div>
       </div>
     </div>
 
     <div class="g-body">
-      <!-- 左：key 列表 -->
+      <!-- 左：key 列表 / 目录树 -->
       <div class="g-list">
         <Table
+          v-if="viewMode === 'list'"
           :columns="columns"
           :data-source="items"
           row-key="key"
@@ -341,9 +472,6 @@ onMounted(() => {
             </template>
 
             <template v-else-if="column.key === 'action'">
-              <Button type="link" size="small" @click.stop="openDetail(record.key)">
-                查看
-              </Button>
               <Button
                 type="link"
                 size="small"
@@ -359,6 +487,61 @@ onMounted(() => {
             <Empty :description="scanned ? '没有匹配的 key' : '点击扫描开始'" />
           </template>
         </Table>
+
+        <template v-else>
+          <div v-if="treeData.length" class="g-tree-bar">
+            <span class="g-tree-stat">已加载 {{ items.length }} 个 key</span>
+            <div class="g-tree-ops">
+              <Button type="link" size="small" @click="expandAllTree">展开全部</Button>
+              <Button type="link" size="small" @click="expandedKeys = []">收起全部</Button>
+            </div>
+          </div>
+
+          <Tree
+            v-if="treeData.length"
+            class="g-tree"
+            :tree-data="treeData"
+            :height="treeHeight"
+            :style="{ height: `${treeHeight}px` }"
+            :expanded-keys="expandedKeys"
+            :selected-keys="treeSelectedKeys"
+            :auto-expand-parent="false"
+            expand-action="click"
+            block-node
+            @update:expandedKeys="(keys: any) => (expandedKeys = keys)"
+            @select="onTreeSelect"
+          >
+            <template #title="node">
+              <span class="g-tree-node">
+                <span
+                  class="g-tree-name"
+                  :class="{ 'g-key-active': node.redisKey && detail?.key === node.redisKey }"
+                  :title="node.redisKey || node.key"
+                >{{ node.title || '(空)' }}</span>
+
+                <template v-if="node.redisKey">
+                  <Tag :color="TYPE_COLOR[node.type] ?? 'default'">{{ node.type }}</Tag>
+                  <span class="g-ttl">{{ ttlText(node.ttl) }}</span>
+                  <span class="g-tree-actions">
+                    <Button
+                      type="link"
+                      size="small"
+                      danger
+                      @click.stop="confirmDel([node.redisKey])"
+                    >
+                      删除
+                    </Button>
+                  </span>
+                </template>
+                <span v-else-if="node.children?.length" class="g-tree-count">
+                  {{ node.children.length }}
+                </span>
+              </span>
+            </template>
+          </Tree>
+
+          <Empty v-else :description="scanned ? '没有匹配的 key' : '点击扫描开始'" />
+        </template>
 
         <div v-if="hasMore" class="g-more">
           <Button :loading="loadingMore" block @click="scan(false)">
@@ -479,13 +662,25 @@ onMounted(() => {
   gap: 8px;
 }
 
-.g-toolbar-info {
+.g-toolbar-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.g-toolbar-info {
   /* 工具栏按钮多时不许压缩这段文字，否则会被截成半个字 */
   flex: none;
   white-space: nowrap;
   font-size: 12px;
   color: var(--g-text-dim);
+}
+
+.g-view-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .g-btn-text {
@@ -531,6 +726,69 @@ onMounted(() => {
 
 .g-more {
   padding: 8px 4px 4px;
+}
+
+/* ---------------- 目录树 ---------------- */
+
+.g-tree-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.g-tree-stat {
+  font-size: 12px;
+  color: var(--g-text-dim);
+}
+
+.g-tree-ops {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.g-tree {
+  font-family: var(--g-font-mono, ui-monospace, Menlo, Consolas, monospace);
+}
+
+.g-tree :deep(.ant-tree-list-holder) {
+  height: 100%;
+}
+
+.g-tree :deep(.ant-tree-node-content-wrapper) {
+  height: auto;
+  min-height: 24px;
+  line-height: 22px;
+}
+
+.g-tree-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.g-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.g-tree-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--g-text-dim);
+}
+
+.g-tree-actions {
+  flex: none;
+  display: flex;
+  gap: 2px;
 }
 
 .g-detail-head {
