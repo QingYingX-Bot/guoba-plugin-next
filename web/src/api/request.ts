@@ -30,12 +30,30 @@ let tokenGetter: () => string | undefined = () => undefined
 /** 401 处理回调，由 store 注册 */
 let unauthorizedHandler: () => void = () => undefined
 
+/**
+ * 401 提示 / 跳转的去重窗口（毫秒）。
+ *
+ * 页面一次会并发好几个请求（用户信息、权限、菜单…），令牌一过期就一起 401，
+ * 不去重的话会连弹好几条「登录已失效」、跳好几次登录页。
+ */
+const UNAUTHORIZED_DEBOUNCE = 3000
+let lastUnauthorizedAt = 0
+
 export function setTokenGetter(fn: () => string | undefined) {
   tokenGetter = fn
 }
 
 export function setUnauthorizedHandler(fn: () => void) {
   unauthorizedHandler = fn
+}
+
+/** 统一的 401 处理：一个窗口内只提示并跳转一次 */
+function handleUnauthorized() {
+  const now = Date.now()
+  if (now - lastUnauthorizedAt < UNAUTHORIZED_DEBOUNCE) return
+  lastUnauthorizedAt = now
+  message.error('登录已失效，请重新登录')
+  unauthorizedHandler()
 }
 
 http.interceptors.request.use((config) => {
@@ -55,8 +73,12 @@ http.interceptors.response.use(
   (error) => {
     // 401 统一跳登录，其余错误交给调用方处理
     if (error?.response?.status === 401) {
-      unauthorizedHandler()
-      return Promise.reject(new Error('登录已失效，请重新登录'))
+      handleUnauthorized()
+      // 打上标记，避免下面 request() 再弹一遍同样的提示
+      const unauthorized = new Error('登录已失效，请重新登录') as Error & { unauthorized?: boolean; status?: number }
+      unauthorized.unauthorized = true
+      unauthorized.status = 401
+      return Promise.reject(unauthorized)
     }
     return Promise.reject(error)
   },
@@ -107,7 +129,8 @@ export async function request<T = any>(
     return (raw ? data : data.result) as T
   } catch (error: any) {
     const text = normalizeError(error)
-    if (showError) {
+    // 401 已经在拦截器里统一提示过了，这里不再重复弹
+    if (showError && !error?.unauthorized) {
       message.error(text)
     }
     throw new ApiError(text, error?.status ?? error?.response?.status, error?.code ?? error?.response?.data?.code)
