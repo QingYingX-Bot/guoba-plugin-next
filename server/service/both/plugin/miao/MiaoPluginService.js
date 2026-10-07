@@ -290,7 +290,8 @@ export default class MiaoPluginService extends IMiaoPluginService {
     let list = []
     for (const themeName of themeNames) {
       let style = await this.getHelpThemeConfig({themeName})
-      list.push({name: themeName, style})
+      let hasBg = fs.existsSync(path.join(this.miaoPath.themePath, themeName, 'bg.jpg'))
+      list.push({name: themeName, style, hasBg})
     }
     return list
   }
@@ -323,25 +324,48 @@ export default class MiaoPluginService extends IMiaoPluginService {
 
   async addHelpTheme(params, files) {
     let {themeName} = params
-    let [mainPic] = files
     let themePath = path.join(this.miaoPath.themePath, themeName)
     if (fs.existsSync(themePath)) {
       throw new GuobaError(`${themeName} 已存在！`)
     }
+    let pics = files || []
+    let mainPic = pics.find((f) => f.fieldname !== 'bg')
+    let bgPic = pics.find((f) => f.fieldname === 'bg')
+    if (!mainPic) {
+      throw new GuobaError('缺少头图 main.png')
+    }
     fs.mkdirSync(themePath)
-    let mainImgPath = path.join(themePath, 'main.png')
-    moveFile(mainPic.path, mainImgPath)
+    moveFile(mainPic.path, path.join(themePath, 'main.png'))
+    if (bgPic) {
+      moveFile(bgPic.path, path.join(themePath, 'bg.jpg'))
+    }
   }
 
   async editHelpTheme(params, files) {
-    let {themeName} = params
-    let [mainPic] = files
+    let {themeName, resetBg} = params
     let themePath = path.join(this.miaoPath.themePath, themeName)
     if (!fs.existsSync(themePath)) {
       throw new GuobaError(`${themeName} 不存在！`)
     }
-    let mainImgPath = path.join(themePath, 'main.png')
-    moveFile(mainPic.path, mainImgPath)
+    if (resetBg) {
+      let bgPath = path.join(themePath, 'bg.jpg')
+      if (fs.existsSync(bgPath)) {
+        fs.rmSync(bgPath)
+      }
+      return
+    }
+    let pics = files || []
+    let mainPic = pics.find((f) => f.fieldname !== 'bg')
+    let bgPic = pics.find((f) => f.fieldname === 'bg')
+    if (!mainPic && !bgPic) {
+      throw new GuobaError('没有收到图片文件')
+    }
+    if (mainPic) {
+      moveFile(mainPic.path, path.join(themePath, 'main.png'))
+    }
+    if (bgPic) {
+      moveFile(bgPic.path, path.join(themePath, 'bg.jpg'))
+    }
   }
 
   async deleteHelpTheme(params) {
@@ -374,7 +398,14 @@ export default class MiaoPluginService extends IMiaoPluginService {
    * 获取皮肤bg路径
    * @return {*}
    */
-  getThemeBgPath() {
+  getThemeBgPath(query) {
+    let {themeName} = (query || {})
+    if (themeName) {
+      let themeBgPath = path.join(this.miaoPath.themePath, themeName, 'bg.jpg')
+      if (fs.existsSync(themeBgPath)) {
+        return themeBgPath
+      }
+    }
     return path.join(this.miaoPath.themeDefaultPath, 'bg.jpg')
   }
 

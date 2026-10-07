@@ -121,8 +121,9 @@ dist
 /lib/test.js
 /lib/v2-js/*
 /config/*
-/test/*
-!/test/components/
-/test/components/*
-!/test/components/Changelog.test.js
-/server/static/preload
+# ⚠️ 测试/调试脚本一律不进公开仓（主人 2026-09-27 定的规则）
+/test/
+*.test.js
+*.test.mjs
+*.spec.js
+*.spec.mjs

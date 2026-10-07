@@ -21,6 +21,7 @@ export async function useMenuList() {
   menus.push(SystemMenus.backup)
   menus.push(...(await useCustomPagesMenu()))
   menus.push(SystemMenus.accountGroup)
+  menus.push(SystemMenus.theme)
   menus.push(SystemMenus.about)
   return menus
 }

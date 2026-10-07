@@ -24,20 +24,14 @@ const links = [
   {
     title: '锅巴插件仓库',
     desc: 'Guoba-Plugin 源码与 issue',
-    url: 'https://gitee.com/guoba-yunzai/guoba-plugin',
+    url: 'https://github.com/cchanlan/guoba-plugin-next',
     icon: 'ant-design:code-outlined',
   },
   {
     title: '插件索引',
     desc: 'Yunzai 插件收录列表',
-    url: 'https://gitee.com/guoba-yunzai/yunzai-plugins-index',
+    url: 'https://gitee.com/yhArcadia/Yunzai-Bot-plugins-index',
     icon: 'ant-design:appstore-outlined',
-  },
-  {
-    title: 'Miao-Yunzai',
-    desc: '喵版 Yunzai 本体',
-    url: 'https://gitee.com/yoimiya-kokomi/Miao-Yunzai',
-    icon: 'ant-design:github-outlined',
   },
 ]
 

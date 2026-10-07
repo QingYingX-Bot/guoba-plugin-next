@@ -39,9 +39,9 @@ export default class MiaoPluginController extends ApiController {
     this.get('/help/theme/config', this.getHelpThemeConfig)
     // 保存皮肤配置项
     this.post('/help/theme/config', this.saveHelpThemeConfig)
-    // 皮肤 post 操作（新增）
+    // 皮肤 post 操作
     this.post('/help/theme/action', this.addHelpTheme)
-    // 皮肤 put 操作（修改，仅底图）（由于put操作无法处理files，可能是express的bug，所以改为post）
+    // 皮肤修改：换头图/背景，或只传 resetBg=1 删掉自定义背景回落到 default
     this.post('/help/theme/action_put', this.putHelpTheme)
     // 皮肤 delete 操作（删除）
     this.delete('/help/theme/action', this.deleteHelpTheme)

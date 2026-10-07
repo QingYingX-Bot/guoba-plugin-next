@@ -13,8 +13,39 @@ export class LoginService extends Service {
     let token = jwt.sign({username}, cfg.getJwtSecret())
     // 将token存入redis
     let redisKey = this.getRedisKey(token)
-    redis.set(redisKey, token, {EX: 3600 * 24})
+    redis.set(redisKey, token, {EX: Constant.TOKEN_TTL})
     return token
+  }
+
+  /**
+   * 令牌滑动续期。
+   *
+   * 只要面板还在用（任何带令牌的请求），就把这条 key 的寿命往后顺延，
+   * 做到「一直在用就一直不掉线」。剩余寿命还够时直接返回，不写 redis。
+   * 续期失败只记日志，不影响本次请求 —— 下次请求还会再试。
+   */
+  async renewToken(token) {
+    if (!token) return
+    let redisKey = this.getRedisKey(token)
+    try {
+      // ttl 是能力探测：个别宿主的 redis 客户端（或内存降级实现）未必实现它，
+      // 拿不到就退化成「每次都续」，宁可多写一次也不能漏续。
+      if (typeof redis.ttl === 'function') {
+        let ttl = await redis.ttl(redisKey)
+        // -2：key 不存在（本来也进不到这里）；-1：key 没有过期时间，都不用管
+        if (ttl < 0) return
+        if (ttl > Constant.TOKEN_RENEW_GAP) return
+      }
+      if (typeof redis.expire === 'function') {
+        await redis.expire(redisKey, Constant.TOKEN_TTL)
+      } else {
+        // 兜底：重写一遍 value 顺带把 EX 带上
+        await redis.set(redisKey, token, {EX: Constant.TOKEN_TTL})
+      }
+    } catch (err) {
+      logger.error('[Guoba] 登录令牌续期失败')
+      logger.error(err)
+    }
   }
 
   logout(token) {

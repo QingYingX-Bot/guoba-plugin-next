@@ -1,5 +1,16 @@
 import { theme as antdTheme } from 'ant-design-vue'
 import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
+import {
+  BRAND,
+  BRAND_LIGHT,
+  DEFAULT_THEME,
+  resolvePrimary,
+  shiftLightness,
+  withAlpha,
+  type ThemeMode,
+} from './config'
+
+export * from './config'
 
 /**
  * 品牌色分主题给，不共用一份。
@@ -9,21 +20,10 @@ import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
  * 浅色改成同样温润但压得住的灰绿（米白底上 4.7:1）。
  * CSS 侧的对应值在 styles/index.css 的 html[data-theme] 两个块里。
  */
-export const BRAND = '#d19f56'
-export const BRAND_HOVER = '#e0b674'
-export const BRAND_ACTIVE = '#b8873f'
-
-export const BRAND_LIGHT = '#5f7a6b'
-export const BRAND_LIGHT_HOVER = '#4e6a5c'
-export const BRAND_LIGHT_ACTIVE = '#3f584c'
-
 const sharedToken = {
   colorSuccess: '#4ca97a',
   colorWarning: '#d99b3d',
   colorError: '#d9614c',
-  borderRadius: 10,
-  borderRadiusLG: 14,
-  fontSize: 14,
   wireframe: false,
 }
 
@@ -56,7 +56,7 @@ export const darkTheme: ThemeConfig = {
       colorItemBg: 'transparent',
       colorSubItemBg: 'transparent',
       colorItemBgSelected: 'rgba(209, 159, 86, 0.16)',
-      colorItemTextSelected: BRAND_HOVER,
+      colorItemTextSelected: '#e0b674',
       colorItemBgHover: 'rgba(255, 255, 255, 0.06)',
       radiusItem: 8,
       itemMarginInline: 8,
@@ -97,7 +97,7 @@ export const lightTheme: ThemeConfig = {
       colorItemBg: 'transparent',
       colorSubItemBg: 'transparent',
       colorItemBgSelected: 'rgba(95, 122, 107, 0.13)',
-      colorItemTextSelected: BRAND_LIGHT_ACTIVE,
+      colorItemTextSelected: '#3d5a4a',
       colorItemBgHover: 'rgba(53, 50, 44, 0.05)',
       radiusItem: 8,
       itemMarginInline: 8,
@@ -108,6 +108,43 @@ export const lightTheme: ThemeConfig = {
   },
 }
 
-export function useThemeConfig(isDark: boolean): ThemeConfig {
-  return isDark ? darkTheme : lightTheme
+export interface ThemeOptions {
+  isDark: boolean
+  /** 主色调，空串表示用内置默认 */
+  primaryColor?: string
+  /** antd 组件圆角（px） */
+  borderRadius?: number
+  /** 基础字号（px） */
+  fontSize?: number
+}
+
+/**
+ * 把外观设置盖到主题上。
+ */
+export function useThemeConfig(options: ThemeOptions): ThemeConfig {
+  const { isDark } = options
+  const base = isDark ? darkTheme : lightTheme
+  const mode: ThemeMode = isDark ? 'dark' : 'light'
+  const primary = resolvePrimary(mode, options.primaryColor ?? '')
+  const radius = options.borderRadius ?? DEFAULT_THEME.borderRadius
+  const ink = shiftLightness(primary, isDark ? 0.14 : -0.13)
+  return {
+    ...base,
+    token: {
+      ...base.token,
+      colorPrimary: primary,
+      colorInfo: primary,
+      borderRadius: radius,
+      borderRadiusLG: radius + 4,
+      fontSize: options.fontSize ?? DEFAULT_THEME.fontSize,
+    },
+    components: {
+      ...base.components,
+      Menu: {
+        ...base.components?.Menu,
+        colorItemBgSelected: withAlpha(primary, isDark ? 0.16 : 0.13),
+        colorItemTextSelected: ink,
+      },
+    },
+  }
 }

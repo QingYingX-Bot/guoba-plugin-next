@@ -26,10 +26,14 @@ body {
    品牌色必须分主题给，不能放在 :root 里共用 —— 深色底下好看的暖金拿到浅色底上
    对比度只有 2.2:1（正文要 4.5:1），而 --g-brand 有五十多处是当文字色用的
    （磁盘百分比、快捷入口、链接、终端提示…），小字会糊成一团。
-   下面这份只是没有 data-theme 时的兜底，实际由两个主题块各自覆盖 */
+   下面这份只是没有 data-theme 时的兜底，实际由两个主题块各自覆盖；
+   「外观设置」里换了主色则由 store 覆盖到 html 的行内样式上，优先级更高 */
 :root {
   --g-brand: #d19f56;
   --g-brand-soft: rgba(209, 159, 86, 0.14);
+  --g-radius: 10px;
+  --g-radius-lg: 14px;
+  --g-font-size: 14px;
 }
 
 html[data-theme='dark'] {
@@ -47,6 +51,8 @@ html[data-theme='dark'] {
   --g-brand-shadow: 0 6px 16px rgba(209, 159, 86, 0.26);
 
   --g-bg: #0d1017;
+  --g-bg-sider: #12161f;
+  --g-bg-header: #12161f;
   --g-bg-card: #181c25;
   --g-bg-elevated: #1e2430;
   --g-bg-soft: #1c222d;
@@ -57,6 +63,11 @@ html[data-theme='dark'] {
   --g-text-dim: rgba(255, 255, 255, 0.4);
   --g-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
   color-scheme: dark;
+
+  /* 深色毛玻璃 */
+  --g-glass-surface: rgba(18, 22, 31, 0.55);
+  --g-glass-card: rgba(24, 28, 37, 0.62);
+  --g-glass-content: rgba(13, 16, 23, 0.25);
 
   /* 日志的 ANSI 配色，取常见终端（VS Code dark+）那套，深色底下跟终端里看到的一致 */
   --g-ansi-black: #5c6370;
@@ -91,6 +102,8 @@ html[data-theme='light'] {
   --g-brand-shadow: 0 6px 16px rgba(95, 122, 107, 0.22);
 
   --g-bg: #f5f3ec;
+  --g-bg-sider: #fbfaf6;
+  --g-bg-header: #fbfaf6;
   --g-bg-card: #fbfaf6;
   --g-bg-elevated: #fdfcf9;
   --g-bg-soft: #f0ede4;
@@ -101,6 +114,11 @@ html[data-theme='light'] {
   --g-text-dim: #9a948a;
   --g-shadow: 0 4px 16px rgba(74, 68, 54, 0.08);
   color-scheme: light;
+
+  /* 浅色毛玻璃 */
+  --g-glass-surface: rgba(251, 250, 246, 0.6);
+  --g-glass-card: rgba(251, 250, 246, 0.7);
+  --g-glass-content: rgba(245, 243, 236, 0.3);
 
   /* 同一套色相压暗，终端原色在白底上（尤其黄、绿、青）根本看不清 */
   --g-ansi-black: #3f3f46;
@@ -173,10 +191,10 @@ code,
 
 /* ---------------- 通用工具类 ---------------- */
 
+/* 宽屏铺满内容区：原先限 1400px 居中，2560 屏上左右各空掉 470px。
+   控件级的可读宽度由各页面自己把（表单见 SchemaForm），这里不再卡整页。 */
 .g-page {
   padding: 20px;
-  max-width: 1400px;
-  margin: 0 auto;
 }
 
 /* ---------------- 窄屏适配 ---------------- */
@@ -361,4 +379,44 @@ code,
 
 .g-markdown a {
   color: var(--g-brand);
+}
+
+/* ---------------- 自定义背景图 ---------------- */
+
+html[data-has-bg='1'] .g-layout {
+  background-image: var(--g-bg-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+html[data-has-bg='1'] body .g-sider,
+html[data-has-bg='1'] body .g-header,
+html[data-has-bg='1'] body .g-main,
+html[data-has-bg='1'] body .g-content {
+  background-color: transparent;
+  background-image: none;
+}
+
+/* ---------------- 毛玻璃 ---------------- */
+
+html[data-theme-id='glass'] body .g-sider,
+html[data-theme-id='glass'] body .g-header {
+  background-color: var(--g-glass-surface);
+  backdrop-filter: blur(14px) saturate(1.3);
+}
+
+html[data-theme-id='glass'] body .g-content {
+  background-color: var(--g-glass-content);
+}
+
+html[data-theme-id='glass'] body .ant-card {
+  background: var(--g-glass-card);
+  backdrop-filter: blur(14px) saturate(1.3);
+}
+
+html[data-theme-id='glass'] body .g-actions {
+  background-color: var(--g-glass-surface);
+  backdrop-filter: blur(14px) saturate(1.3);
+  border-top: 1px solid var(--g-border);
 }

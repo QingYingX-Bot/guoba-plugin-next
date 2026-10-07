@@ -146,7 +146,17 @@ class GuobaConfig {
 const options = {}
 
 if (isTRSS) {
-  options['trssCfg'] = (await import('../../../lib/config/config.js')).default
+  try {
+    // TRSS-Yunzai / JiuLi 等宿主的核心配置
+    options['trssCfg'] = (await import('../../../lib/config/config.js')).default
+  } catch (e) {
+    // JiuLi 可能路径不同，尝试其他可能的位置
+    try {
+      options['trssCfg'] = (await import('../../lib/config/config.js')).default
+    } catch (e2) {
+      logger.warn('[Guoba] 无法加载宿主配置，部分功能可能受限')
+    }
+  }
 }
 
 /** Guoba配置 */

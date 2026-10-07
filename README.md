@@ -7,8 +7,8 @@
 > 本 Fork 重写了整套前端并新增若干功能，见下方「相对原版」。
 
 仅支持 V3 的 Yunzai（V2 只支持迁移到 V3）。已适配 **Miao-Yunzai**、**TRSS-Yunzai** 及其 fork
-（如 [Orangezai](https://github.com/zhiyu1998/Orangezai)）——TRSS 系靠能力而非名字识别，
-换名字的 fork 也会自动共享端口挂在 `/guoba` 下。
+（如 [Orangezai](https://github.com/zhiyu1998/Orangezai)）、以及 **[JiuLi](https://gitee.com/fox-glaze/jiuli)**
+——TRSS 系靠能力而非名字识别，换名字的 fork 与兼容框架也会自动共享端口挂在 `/guoba` 下。
 
 装好后发 `#锅巴帮助` 看功能。
 
@@ -28,7 +28,7 @@
 | 插件更新 | 显示分支与落后提交数，单个或批量更新；有本地改动可暂存 / 丢弃；能一键回滚 |
 | 终端 | 网页 shell，长驻会话、流式输出、命令历史；危险命令弹确认；Windows 用 PowerShell |
 | 扩展页面 | 插件可自带页面，也能在面板内新建（见 [docs/custom-page.md](./docs/custom-page.md)） |
-| 登录安全 | 密码 + 新设备验证码（私聊发主人），可信设备 90 天、认设备不认 IP，可查看 / 撤销 |
+| 登录安全 | 密码 + 新设备验证码（私聊发主人），可信设备 90 天、认设备不认 IP，可查看 / 撤销；登录令牌 7 天、随用随续，一直在用就一直不掉线 |
 | 好友群聊群发 | 勾选目标后台异步群发，进度可看、可中止、失败明细可查 |
 | 首页面板 | CPU / 内存 / 磁盘 / 运行时长，收发消息量与 7 天趋势 |
 | 网页截图 | 群里发个网址就截图预览（默认关闭、默认仅主人可用）；要过人机验证、要登录、打不开、空白、会印出服务器 IP 的页面都不发图也不回话 |
@@ -82,7 +82,7 @@ npm install express multer jsonwebtoken
 
 ## 前端开发
 
-前端在 `web/`，`pnpm dev` 起开发服务器，`pnpm build` 产物输出到 `server/static-next/`。
+前端在 `web/`，`pnpm dev` 起开发服务器，`pnpm build` 产物输出到 `server/static/`。
 
 # 免责声明
 
@@ -92,7 +92,7 @@ npm install express multer jsonwebtoken
 # 致谢
 
 - [guoba-yunzai/guoba-plugin](https://github.com/guoba-yunzai/guoba-plugin) —— 原项目，作者 [@Zolay-Poi](https://gitee.com/zolay-poi)
-- [Yunzai-Bot](https://github.com/yoimiya-kokomi/Yunzai-Bot) / [Miao-Yunzai](https://github.com/yoimiya-kokomi/Miao-Yunzai) / [TRSS-Yunzai](https://github.com/TimeRainStarSky/Yunzai) —— 宿主框架
+- [Yunzai-Bot](https://github.com/yoimiya-kokomi/Yunzai-Bot) / [Miao-Yunzai](https://github.com/yoimiya-kokomi/Miao-Yunzai) / [TRSS-Yunzai](https://github.com/TimeRainStarSky/Yunzai) / [JiuLi](https://gitee.com/fox-glaze/jiuli) —— 宿主框架
 - [Ant Design Vue](https://antdv.com/) · [Vue3](https://vuejs.org/) · [Vite](https://vitejs.dev/) —— 前端基建
 
 # 开源协议

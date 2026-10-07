@@ -1,6 +1,26 @@
 import fs from 'fs'
+import path from 'path'
+import {hasPlugin, _paths} from '../../utils/paths.js'
 
-export const yunzaiPackage = JSON.parse(fs.readFileSync('./package.json', 'utf8'))
+/**
+ * 读宿主的 package.json。
+ * 必须用 _paths.root 而不是 './package.json'，否则在 JiuLi 等「CWD 切到插件目录」的
+ * 宿主下会读到锅巴自己的 package.json（name=guoba-plugin, version=1.x.x），
+ * 导致 isV3/isV4 误判为 false、走到 initV2 分支。
+ */
+function readHostPackage() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(_paths.root, 'package.json'), 'utf8'))
+  } catch {
+    // 兜底：万一 _paths.root 也不对，退回 CWD（保持旧行为）
+    try {
+      return JSON.parse(fs.readFileSync('./package.json', 'utf8'))
+    } catch {
+      return {}
+    }
+  }
+}
+export const yunzaiPackage = readHostPackage()
 
 // 检查yunzai版本
 export const {
@@ -32,6 +52,8 @@ export const isDev = (process.argv || []).includes('dev')
  */
 function detectTRSSLike(name) {
   if (name === 'trss-yunzai') return true
+  // JiuLi 也兼容 TRSS 能力：有 express、配置结构类似、插件目录兼容
+  if (name === 'jiuli') return true
   // 插件是在 Bot 建好服务之后加载的，这个信号最直接
   if (typeof globalThis.Bot?.express === 'function') return true
   // 兜底：万一某个 fork 把插件加载放在建服务之前，就看配置长什么样
@@ -76,7 +98,7 @@ function checkVersion() {
   const isTRSS = detectTRSSLike(name)
 
   // v4 need check genshin
-  const hasGenshin = fs.existsSync('./plugins/genshin')
+  const hasGenshin = hasPlugin('genshin')
 
   return {
     isV2,

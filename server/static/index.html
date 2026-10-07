@@ -1,8 +1,73 @@
-<!doctype html><html lang="zh-Hans" id="htmlRoot"><head><script src="/guoba-plugin-mock-root/_app.config.js?v=1.0.0-1786199566517"></script><!--#GUO{PRELOAD_JS}BA#--><meta charset="UTF-8"/><meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"/><meta name="renderer" content="webkit"/><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=0"/><title>GuobaAdmin</title><link rel="icon" href="/guoba-plugin-mock-root/favicon.ico"/><script type="module" crossorigin src="/guoba-plugin-mock-root/assets/index.js"></script><link rel="stylesheet" crossorigin href="/guoba-plugin-mock-root/assets/index.css"><link disabled="disabled" id="__VITE_PLUGIN_THEME-ANTD_DARK_THEME_LINK__" rel="alternate stylesheet" href="/guoba-plugin-mock-root/assets/app-antd-dark-theme-style.e3b0c442.css"></head><body><script>(() => {
-        var htmlRoot = document.getElementById('htmlRoot');
-        var theme = window.localStorage.getItem('__APP__DARK__MODE__');
-        if (htmlRoot && theme) {
-          htmlRoot.setAttribute('data-theme', theme);
-          theme = htmlRoot = null;
+
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <!-- 后端 ConfigPreload 会把注入脚本替换到下面这个标记处，切勿删除 -->
+    <!--#GUO{PRELOAD_JS}BA#-->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>锅巴面板</title>
+    <!-- 用绝对路径，避免自定义挂载路径下相对解析出错 -->
+    <link rel="icon" href="/guoba-plugin-mock-root/favicon.ico" />
+    <style>
+      html,
+      body,
+      #app {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        background: #10131a;
+      }
+      /* 首屏 loading，避免白屏 */
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        align-items: center;
+        justify-content: center;
+        background: #10131a;
+        color: #d19f56;
+        transition: opacity 0.3s;
+      }
+      #boot .ring {
+        width: 42px;
+        height: 42px;
+        border: 3px solid rgba(209, 159, 86, 0.25);
+        border-top-color: #d19f56;
+        border-radius: 50%;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      #boot .txt {
+        font-size: 14px;
+        letter-spacing: 2px;
+        opacity: 0.75;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
         }
-      })();</script><div id="app"><style>html[data-theme=dark] .app-loading{background-color:#2c344a}html[data-theme=dark] .app-loading .app-loading-title{color:rgb(255 255 255 / 85%)}.app-loading{display:flex;width:100%;height:100%;justify-content:center;align-items:center;flex-direction:column;background-color:#f4f7f9}.app-loading .app-loading-wrap{position:absolute;top:50%;left:50%;display:flex;transform:translate3d(-50%,-50%,0);justify-content:center;align-items:center;flex-direction:column}.app-loading .dots{display:flex;padding:98px;justify-content:center;align-items:center}.app-loading .app-loading-title{display:flex;margin-top:30px;font-size:30px;color:rgb(0 0 0 / 85%);justify-content:center;align-items:center}.app-loading .app-loading-logo{display:block;width:90px;margin:0 auto;margin-bottom:20px}.dot{position:relative;display:inline-block;width:48px;height:48px;margin-top:30px;font-size:32px;transform:rotate(45deg);box-sizing:border-box;animation:antRotate 1.2s infinite linear}.dot i{position:absolute;display:block;width:20px;height:20px;background-color:#0065cc;border-radius:100%;opacity:30%;transform:scale(.75);animation:antSpinMove 1s infinite linear alternate;transform-origin:50% 50%}.dot i:first-child{top:0;left:0}.dot i:nth-child(2){top:0;right:0;animation-delay:.4s}.dot i:nth-child(3){right:0;bottom:0;animation-delay:.8s}.dot i:nth-child(4){bottom:0;left:0;animation-delay:1.2s}@keyframes antRotate{to{transform:rotate(405deg)}}@keyframes antSpinMove{to{opacity:100%}}</style><div class="app-loading"><div class="app-loading-wrap"><img src="/guoba-plugin-mock-root/resource/img/logo.png" class="app-loading-logo" alt="Logo"/><div class="app-loading-dots"><span class="dot dot-spin"><i></i><i></i><i></i><i></i></span></div><div class="app-loading-title">GuobaAdmin</div></div></div></div></body></html>
+      }
+    </style>
+    <script type="module" crossorigin src="/guoba-plugin-mock-root/assets/index-Cf41goD2.js"></script>
+    <link rel="modulepreload" crossorigin href="/guoba-plugin-mock-root/assets/rolldown-runtime-hePW80VL.js">
+    <link rel="modulepreload" crossorigin href="/guoba-plugin-mock-root/assets/antd-DsYKTd_3.js">
+    <link rel="modulepreload" crossorigin href="/guoba-plugin-mock-root/assets/vue-i3j5ZGwN.js">
+    <link rel="modulepreload" crossorigin href="/guoba-plugin-mock-root/assets/vendor-DcApWKDz.js">
+    <link rel="modulepreload" crossorigin href="/guoba-plugin-mock-root/assets/_plugin-vue_export-helper-DKCZSaUk.js">
+    <link rel="stylesheet" crossorigin href="/guoba-plugin-mock-root/assets/index-BIqdks2g.css">
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="boot">
+      <div class="ring"></div>
+      <div class="txt">锅巴面板加载中</div>
+    </div>
+  </body>
+</html>

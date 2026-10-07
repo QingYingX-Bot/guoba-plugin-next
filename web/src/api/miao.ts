@@ -49,11 +49,18 @@ export const apiGetMiaoThemeConfig = (themeName: string) =>
 export const apiSaveMiaoThemeConfig = (themeName: string, config: any) =>
   post('/plugin/miao/help/theme/config', { themeName, config }, { showSuccess: true })
 
-/** 新增皮肤，FormData 需含 themeName 与 main.png 文件 */
+/**
+ * 新增皮肤。FormData 需含 themeName，以及图片文件 —— 按字段名区分落盘位置：
+ *   main → main.png（必需）    bg → bg.jpg（可选，不传则出图沿用 default 的）
+ */
 export const apiAddMiaoTheme = (formData: FormData) =>
   post('/plugin/miao/help/theme/action', formData, { showSuccess: true })
 
-/** 修改皮肤底图，FormData 需含 themeName 与 main.png 文件 */
+/**
+ * 修改皮肤。两种用法：
+ *   带图片 → 换图，字段名同上（main / bg）
+ *   只带 resetBg=1 → 删掉自定义 bg.jpg，出图回落到 default
+ */
 export const apiPutMiaoTheme = (formData: FormData) =>
   post('/plugin/miao/help/theme/action_put', formData, { showSuccess: true })
 
@@ -73,7 +80,7 @@ export const apiDeleteMiaoBackup = (id: string) =>
 
 /**
  * 皮肤底图/主图地址。
- * 这两个接口直接返回图片文件，所以拼成 URL 交给 <img> 用。
+ * 这两个接口直接返回图片文件，所以拼成 URL 交给 <img> / background 用。
  * 后端 TokenInterceptor 对 /api/plugin/miao/help/theme/* 允许弱令牌（liteToken），
  * 通过 query 传 token 即可。
  */
@@ -83,14 +90,18 @@ export function miaoThemeMainUrl(themeName: string, token: string, ts?: number) 
   return `${API_BASE}/plugin/miao/help/theme/main?${q.toString()}`
 }
 
-/** 底图（bg.jpg）固定取默认皮肤，后端忽略 themeName */
-export function miaoThemeBgUrl(token: string, ts?: number) {
-  const q = new URLSearchParams({ token })
+/**
+ * 底图（bg.jpg）。
+ */
+export function miaoThemeBgUrl(themeName: string, token: string, ts?: number) {
+  const q = new URLSearchParams({ themeName, token })
   if (ts) q.set('_t', String(ts))
   return `${API_BASE}/plugin/miao/help/theme/bg?${q.toString()}`
 }
 
-/** 帮助图标，注意此路径不在 liteToken 白名单内，需用正式 token */
+/**
+ * 帮助图标
+ */
 export function miaoHelpIconUrl(token: string, ts?: number) {
   const q = new URLSearchParams({ token })
   if (ts) q.set('_t', String(ts))

@@ -18,8 +18,8 @@ export default defineConfig({
     },
   },
   build: {
-    // 产物直接输出到后端静态目录，不覆盖旧版 server/static
-    outDir: fileURLToPath(new URL('../server/static-next', import.meta.url)),
+    // 产物直接输出到后端静态目录
+    outDir: fileURLToPath(new URL('../server/static', import.meta.url)),
     emptyOutDir: true,
     chunkSizeWarningLimit: 1500,
     rollupOptions: {

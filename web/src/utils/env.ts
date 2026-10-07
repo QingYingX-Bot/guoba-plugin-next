@@ -8,6 +8,8 @@
  * 开发模式下后端不会注入，这里提供与后端一致的兜底值。
  */
 
+import type { ThemeSettings } from '@/theme/config'
+
 /** 后端真实挂载前缀，见 utils/paths.js 的 realMountPrefix */
 export const REAL_MOUNT_PREFIX = '/guoba-plugin-mock-root'
 
@@ -46,6 +48,12 @@ export const TOKEN_STORAGE_KEY = 'guoba:token'
 
 /** localStorage 中保存主题的键 */
 export const THEME_STORAGE_KEY = 'guoba:theme'
+
+/**
+ * 服务端注入的外观主题（config/application.yaml 的 theme 段）
+ */
+export const INJECTED_THEME: Partial<ThemeSettings> | null =
+  (guobaConf.THEME as Partial<ThemeSettings> | undefined) ?? null
 
 /** 拼接后端资源地址（图标、图片等） */
 export function withMountPrefix(path: string): string {

@@ -82,6 +82,7 @@ watch(() => route.fullPath, () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--g-bg-sider);
 }
 
 /* ---- 窄屏：侧边栏改为覆盖式抽屉，不占内容宽度 ---- */

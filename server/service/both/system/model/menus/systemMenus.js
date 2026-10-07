@@ -117,6 +117,16 @@ export const SystemMenus = {
       icon: 'ant-design:setting-outlined',
     },
   },
+  // 外观设置
+  theme: {
+    path: '/theme',
+    name: 'Theme',
+    component: '/guoba/system/theme/index',
+    meta: {
+      title: '外观设置',
+      icon: 'ant-design:bulb-outlined',
+    },
+  },
   // 关于
   about: {
     path: '/about',

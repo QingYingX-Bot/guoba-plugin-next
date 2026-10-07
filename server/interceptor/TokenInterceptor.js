@@ -6,6 +6,7 @@ import {_paths, cfg, Constant} from "#guoba.platform";
 const liteInclude = [
   new RegExp('^/api/plugin/miao/help/theme/.+'),
   new RegExp('^/api/custom-page/asset/[^/]+/.+'),
+  new RegExp('^/api/theme/background/image$'),
 ]
 
 // 需要拦截的路径
@@ -33,6 +34,7 @@ const exclude = [
 export default class TokenInterceptor extends Interceptor {
 
   systemService = autowired('systemService')
+  loginService = autowired('loginService')
 
   constructor(app) {
     super(app)
@@ -68,18 +70,41 @@ export default class TokenInterceptor extends Interceptor {
         } else {
           let redisKey = Constant.REDIS_PREFIX + 'access-token:' + token
           let redisToken = await redis.get(redisKey)
-          if (redisToken) {
-            try {
-              jwt.verify(redisToken, cfg.getJwtSecret())
-              next()
-              return
-            } catch {
-            }
+          if (redisToken && this.#verify(redisToken)) {
+            // 令牌续期：面板还在用就别让它掉线。
+            // 续期失败绝不能影响本次放行，所以整个动作自己吞掉异常
+            // （见 #renewToken），并且不 await —— 副作用不该拖慢请求。
+            this.#renewToken(token)
+            next()
+            return
           }
         }
       }
       let result = Result.noLogin()
       res.status(result.httpStatus).json(result.toJSON())
+    }
+  }
+
+  /** 校验JWT签名，异常一律当成校验失败 */
+  #verify(redisToken) {
+    try {
+      jwt.verify(redisToken, cfg.getJwtSecret())
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 静默续期。
+   *
+   * 这里连「取不到 loginService」也要一起兜住 —— 外层是放行逻辑，
+   * 任何续期侧的意外都不该把一次合法请求打成未登录。
+   */
+  #renewToken(token) {
+    try {
+      this.loginService.renewToken(token)?.catch?.(() => {})
+    } catch {
     }
   }
 

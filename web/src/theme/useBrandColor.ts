@@ -1,6 +1,5 @@
 import { computed } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { BRAND, BRAND_LIGHT } from '@/theme'
 
 /**
  * 给「只能吃颜色字符串」的地方用的品牌色：ECharts 的 canvas、内联 style、
@@ -11,6 +10,6 @@ import { BRAND, BRAND_LIGHT } from '@/theme'
  */
 export function useBrandColor() {
   const appStore = useAppStore()
-  const brand = computed(() => (appStore.isDark ? BRAND : BRAND_LIGHT))
+  const brand = computed(() => appStore.effectivePrimary)
   return { brand }
 }

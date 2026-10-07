@@ -18,11 +18,6 @@ export async function init(apps) {
   // dev 模式下，监听文件变化，自动重启服务器
   if (isDev) {
     let skip = true
-    // 静态资源目录（含新版前端构建产物）里的变化不触发重启
-    let staticPaths = [
-      path.join(_paths.pluginRoot, 'server/static'),
-      path.join(_paths.pluginRoot, 'server/static-next'),
-    ]
     createHotLoad(path.join(_paths.pluginRoot, 'server'), {
       wait: 100,
       immediate: true,
@@ -31,7 +26,8 @@ export async function init(apps) {
           return true
         }
         if (skip) return false
-        if (staticPaths.some(sp => p.startsWith(sp))) {
+        // 前端构建产物（_paths.staticPath）里的变化不触发重启
+        if (p.startsWith(_paths.staticPath)) {
           return false
         }
         return /\.c?js$/.test(p)

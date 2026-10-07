@@ -56,13 +56,14 @@ guoba-plugin/
 │   ├── constant/         # 常量定义
 │   ├── helper/           # 辅助工具
 │   ├── utils/            # 服务端工具函数
-│   └── static/           # 前端 Web UI 静态资源（预编译）
+│   └── static/           # 前端 Web UI 静态资源（web/ 的构建产物）
 │
 ├── utils/                # 全局工具函数
 ├── models/               # 平台抽象层（导出路径、配置、常量等）
 ├── lib/                  # 第三方工具库
 ├── defSet/               # 默认配置模板（YAML）
 ├── resources/            # 静态资源（图片、JSON）
+├── web/                  # 前端源码（Vue3 + Vite + Ant Design Vue）
 └── components/           # UI 组件（Changelog 等）
 ```
 
@@ -301,10 +302,10 @@ npm install express multer body-parser jsonwebtoken socket.io
 
 ## 注意事项
 
-1. **不要修改 `server/static/` 目录** — 这是前端预编译产物，标记为 `linguist-generated`
+1. **不要直接改 `server/static/` 目录** — 这是 `web/` 的前端构建产物（标记为 `linguist-generated`），要改请改 `web/` 源码后重新构建
 2. **`data/` 和 `config/` 目录被 `.gitignore` 忽略** — 运行时生成的数据和配置不应提交
 3. **全局对象依赖 Yunzai-Bot 运行时** — `redis`、`logger`、`plugin`、`segment` 等在独立环境中不可用
 4. **路径别名（`#guoba.*`）是通过 `package.json` 的 `imports` 字段定义的** — 修改别名时需同步更新 `package.json`
-5. **`server/static/` 中的静态资源文件使用 Git LFS 管理**（见 `.gitattributes`）
+5. **静态目录只有一处**：`server/static`。三处必须一致——`web/vite.config.ts` 的 `outDir`、`utils/paths.js` 的 `staticPath`、`server/index.js` 传给框架的 `staticPath`
 6. **注释和用户界面文本使用中文**
 7. **许可证为 GPL-3.0-or-later** — 添加的代码需兼容此许可证

@@ -6,7 +6,14 @@ import { useAppStore } from '@/stores/app'
 import { useThemeConfig } from '@/theme'
 
 const appStore = useAppStore()
-const themeConfig = computed(() => useThemeConfig(appStore.isDark))
+const themeConfig = computed(() =>
+  useThemeConfig({
+    isDark: appStore.isDark,
+    primaryColor: appStore.live.primaryColor,
+    borderRadius: appStore.live.borderRadius,
+    fontSize: appStore.live.fontSize,
+  }),
+)
 
 // Modal.confirm 这类静态方法不在组件树内，拿不到下面这个 ConfigProvider 的上下文
 // （见 ant-design-vue 的 modal/confirm.js，它只读 globalConfigForApi），

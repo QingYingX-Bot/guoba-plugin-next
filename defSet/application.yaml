@@ -116,3 +116,21 @@ webShot:
   skipUnworthy: true
   # 额外禁止访问的域名，支持后缀匹配，一行一个，例如 example.com
   blacklist: []
+
+# 外观主题
+# 面板前端的整体配色。改完刷新页面即可生效，不用重启
+# 深浅模式（顶栏那个按钮切的）不在这里 —— 它只存浏览器本地，每台设备各记各的
+theme:
+  # 内置主题：default（实心）/ glass（毛玻璃，四个面半透明 + 背景模糊）
+  themeId: default
+  # 主色调。留空用内置默认（深色暖金 / 浅色灰绿），只认 #rrggbb 或 #rgb
+  primaryColor: ""
+  # antd 组件圆角（px），0 ~ 24
+  borderRadius: 10
+  # 基础字号（px），12 ~ 20
+  fontSize: 14
+  # 自定义背景图
+  # 只在 themeId 为 glass 时生效，图片放在 config/theme/ 下
+  backgrounds:
+    dark: ""
+    light: ""

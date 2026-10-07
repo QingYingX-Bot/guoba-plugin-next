@@ -1,1 +1,0 @@
-import{dK as t,$ as i}from"./index.js";function throttle(n,r,a){var e=!0,o=!0;if("function"!=typeof n)throw new TypeError("Expected a function");return t(a)&&(e="leading"in a?!!a.leading:e,o="trailing"in a?!!a.trailing:o),i(n,r,{leading:e,maxWait:r,trailing:o})}export{throttle as t};

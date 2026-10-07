@@ -183,7 +183,15 @@ async function loadViaApi(bot, isGroup) {
 export async function ensureContacts(kind = 'friend', botId = '') {
   const isGroup = kind === 'group'
   const wanted = String(botId ?? '').trim()
-  const uins = wanted ? [wanted] : listBots().map((it) => it.uin)
+  /**
+   * 自动兜底时跳过伪账号（stdin、官bot 沙盒、JiuLi 的 mock）。
+   *
+   * 它们的关系链天生是空的，去问协议端只会拿到一个空响应 —— 白跑一趟，还会把
+   * 「取不到群列表（mock）」这种噪音写进日志。用户自己指定了账号就照做，不拦。
+   */
+  const uins = wanted
+    ? [wanted]
+    : listBots().filter((it) => !isFakeAccount(it.uin)).map((it) => it.uin)
 
   await Promise.all(uins.map(async (uin) => {
     // 这是尽力而为的兜底，本身出任何岔子都不该让「读列表」失败

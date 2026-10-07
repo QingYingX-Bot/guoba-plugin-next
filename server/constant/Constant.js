@@ -23,6 +23,14 @@ export default {
   LOGIN_PASSWORD_LOCK_TTL: 900,
   LOGIN_CAPTCHA_GLOBAL_LIMIT: 20,
 
+  // 登录令牌有效期（秒）。
+  // JWT 本身不带 exp，「登录失效」完全由 redis 里这条 key 的存活时间决定。
+  // 旧版签发时给 24 小时死线、之后再不管，面板开着不动到点照样被踢。
+  // 现在按「最后一次使用」算，只要在有效期内还有请求进来就一直往后顺延。
+  TOKEN_TTL: 7 * 24 * 3600,
+  // 剩余寿命低于这个值才续期，避免每个请求都往 redis 写一次
+  TOKEN_RENEW_GAP: 24 * 3600,
+
   // 可信设备：浏览器里存一份长期凭证，换了IP也不用再走验证码
   // （手机流量的IPv6会漂移，只认IP的话验证码会没完没了）
   DEVICE_ID_HEADER: 'x-guoba-device-id',

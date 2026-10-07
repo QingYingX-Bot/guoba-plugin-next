@@ -2,6 +2,7 @@ import lodash from "lodash";
 import {Preload} from "#guoba.framework";
 import {cfg, _version, Constant, _paths} from "#guoba.platform";
 import {isV3, isV4, yunzaiVersion} from '#guoba.adapter'
+import {readTheme} from '../utils/themeConfig.js'
 
 // noinspection JSUnusedGlobalSymbols
 export default class ConfigPreload extends Preload {
@@ -14,7 +15,8 @@ export default class ConfigPreload extends Preload {
 
   getDynamicCfg() {
     return {
-      serverICPNo: cfg.get('server.ICPNo')
+      serverICPNo: cfg.get('server.ICPNo'),
+      theme: readTheme()
     }
   }
 
@@ -52,6 +54,7 @@ export default class ConfigPreload extends Preload {
     return `window["__GUOBA_CONF__"] = ${JSON.stringify({
       VERSION: _version,
       ICP_NO: this.dynamicCfg.serverICPNo,
+      THEME: this.dynamicCfg.theme,
     })}`
   }
 

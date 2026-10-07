@@ -1,1 +1,0 @@
-function dataURLtoBlob(t){const o=t.split(","),a=o[0].match(/:(.*?);/)[1],e=window.atob(o[1]);let n=e.length;const r=new Uint8Array(n);for(;n--;)r[n]=e.charCodeAt(n);return new Blob([r],{type:a})}function blobToDataUrl(t){return new Promise((o=>{let a=new FileReader;a.readAsDataURL(t),a.onload=function(t){o(t.target.result)}}))}export{blobToDataUrl as b,dataURLtoBlob as d};
