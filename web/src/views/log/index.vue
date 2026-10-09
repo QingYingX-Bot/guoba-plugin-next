@@ -372,7 +372,7 @@ onBeforeUnmount(() => {
       <Tooltip title="把当前显示的日志复制到剪贴板">
         <Button size="small" @click="copyAll">复制</Button>
       </Tooltip>
-      <Tooltip title="把最近 30 条日志渲染成图，私聊发给主人（跟 #锅巴日志 同一套样式）">
+      <Tooltip title="把最近 30 条日志出成图，私聊发给主人">
         <Button size="small" :loading="sendingImage" @click="sendImageToMaster">
           <GIcon icon="ant-design:send-outlined" :size="13" /> 发给主人
         </Button>

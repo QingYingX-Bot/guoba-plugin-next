@@ -82,10 +82,10 @@ function confirmTo(c: GitCommit | null) {
   const parts = [
     c?.subject || '',
     forward
-      ? `会把 ${name.value} 的代码 reset 到这个提交，后面那些更新先不合进来；这条路不会自动装依赖，要装就走「更新插件」。`
-      : `会把 ${name.value} 的代码 reset 到这个提交，装上的依赖不动，重启后生效。`,
+      ? `会把 ${name.value} 的代码 reset 到这个提交，不含后续更新；不装依赖，要装走「更新插件」。`
+      : `会把 ${name.value} 的代码 reset 到这个提交，依赖不动，重启后生效。`,
   ]
-  if (info.dirty) parts.push(`本地 ${info.changed.length} 个文件的改动会被丢掉，找不回来。`)
+  if (info.dirty) parts.push(`本地 ${info.changed.length} 个文件的改动会丢掉。`)
   Modal.confirm({
     title: `把 ${name.value} ${forward ? '切换' : '回滚'}到 ${target}？`,
     content: parts.filter(Boolean).join(' '),

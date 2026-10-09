@@ -541,7 +541,7 @@ function onCellDrop(gi: number, ci: number) {
     <template #title><span class="g-miao-title">帮助图</span></template>
     <template #extra>
       <Space>
-        <Tooltip title="左边这张图画的是这个皮肤。出图时用哪个皮肤，由「帮助设置 → 皮肤」决定。">
+        <Tooltip title="左边这张是皮肤预览；出图用哪个由「帮助设置 → 皮肤」决定。">
           <Tag class="g-preview-tag">预览皮肤：{{ previewTheme }}</Tag>
         </Tooltip>
         <Tooltip title="按当前配置走一遍喵喵的真实出图（比较慢）">

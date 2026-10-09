@@ -307,7 +307,7 @@ function groupMode(group: PickerGroup) {
       type="warning"
       show-icon
       class="g-bk-picker-warn"
-      message="选中的内容超过 2 GB，打包会比较慢且占磁盘，建议只留配置和数据"
+      message="超过 2 GB，打包慢且占磁盘，建议只留配置和数据"
     />
 
     <a-collapse v-model:activeKey="activeKeys" class="g-bk-groups">

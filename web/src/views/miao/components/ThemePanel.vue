@@ -89,11 +89,11 @@ const isDefault = computed(() => selected.value === 'default')
 // 侧栏窄，标签用短名，完整说法放 tooltip
 const styleFields = [
   { key: 'fontColor', label: '标题色', type: 'color', hint: '标题字体色（.help-title / .help-group）' },
-  { key: 'fontShadow', label: '标题影', type: 'text', hint: '标题文字阴影，CSS text-shadow，如 0px 0px 1px rgba(6,21,31,.9)；none 为不投影' },
+  { key: 'fontShadow', label: '标题影', type: 'text', hint: '标题文字阴影（CSS text-shadow），如 0px 0px 1px rgba(6,21,31,.9)；none = 不投影' },
   { key: 'descColor', label: '描述色', type: 'color', hint: '描述字体色（.help-desc）' },
   { key: 'descShadow', label: '描述影', type: 'text', hint: '描述文字阴影，CSS text-shadow；none 为不投影' },
-  { key: 'contBgColor', label: '内容底', type: 'color', hint: '面板整体底色（.cont-box），叠在标题栏和帮助行之下' },
-  { key: 'contBgBlur', label: '毛玻璃', type: 'number', hint: '面板底图毛玻璃模糊半径 0-10；「帮助设置」里关掉 bgBlur 时这项不生效' },
+  { key: 'contBgColor', label: '内容底', type: 'color', hint: '面板底色（.cont-box），在标题栏和帮助行之下' },
+  { key: 'contBgBlur', label: '毛玻璃', type: 'number', hint: '底图毛玻璃模糊半径 0-10；关掉 bgBlur 时不生效' },
   { key: 'headerBgColor', label: '头部底', type: 'color', hint: '板块标题栏底色（.help-group）' },
   { key: 'rowBgColor1', label: '奇数行', type: 'color', hint: '帮助表奇数行底色' },
   { key: 'rowBgColor2', label: '偶数行', type: 'color', hint: '帮助表偶数行底色' },
@@ -449,7 +449,7 @@ onMounted(() => load(false))
           </Upload>
           <p v-if="addFile" class="g-file-name">已选择：{{ addFile.name }}</p>
         </FormItem>
-        <FormItem label="背景底图（bg.jpg）" extra="可选。铺在整页背景上并平铺；不传就沿用 default 的">
+        <FormItem label="背景底图（bg.jpg）" extra="可选。铺满整页并平铺；不传沿用 default 的">
           <Upload
             :before-upload="(f: File) => beforeAddFile(f, 'bg')"
             :show-upload-list="false"

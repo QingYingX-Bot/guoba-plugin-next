@@ -407,7 +407,7 @@ onMounted(() => {
         show-icon
         class="g-install-alert"
         message="只允许安装白名单域名下的仓库"
-        description="默认白名单为 github.com、gitee.com、gitlab.com、gitcode.com，可在基础配置里调整。"
+        description="默认只允许 github.com、gitee.com、gitlab.com、gitcode.com，可在基础配置里改。"
       />
       <Input
         v-model:value="installLink"

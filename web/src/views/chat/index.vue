@@ -75,18 +75,18 @@ const RAW_TABS: Array<{ key: RawKey; title: string; hint: string; miss: string }
     key: 'array',
     title: 'msg array',
     hint: 'get_msg 回来的消息段数组',
-    miss: '取不到段数组（适配器没有 get_msg，面板内存里也没有了）。下面是面板规范化后的结构：',
+    miss: '取不到段数组（适配器没有 get_msg，内存里也没了）。下面是规范化后的结构：',
   },
   {
     key: 'raw',
     title: 'msg raw',
     hint: 'get_msg 回来的完整结构 / 协议端的上报原文',
-    miss: '取不到原文：适配器没有 get_msg，这条也不在面板内存里了。',
+    miss: '取不到原文：适配器没有 get_msg，内存里也没了。',
   },
   {
     key: 'pbElem',
     title: 'pb elem',
-    hint: 'protobuf 里的 elem 元素（已滤掉 37 / 9 / 16 那几项杂项）',
+    hint: 'protobuf 里的 elem 元素（已滤掉 37 / 9 / 16）',
     miss: '没取到 protobuf 元素。',
   },
   {

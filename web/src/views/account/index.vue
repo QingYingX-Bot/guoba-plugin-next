@@ -665,7 +665,7 @@ onMounted(() => {
           type="warning"
           show-icon
           class="g-cast-alert"
-          :message="`将向 ${castCount} 个${castNoun}逐个发送，间隔过短可能触发风控。`"
+          :message="`将逐个发给 ${castCount} 个${castNoun}，间隔过短会触发风控。`"
         />
       </template>
 
@@ -757,7 +757,7 @@ onMounted(() => {
       <Alert
         type="warning"
         show-icon
-        :message="`此操作不可撤销，${dangerTarget?.type === 'group' ? '之后需重新被邀请或申请入群' : '之后需对方重新添加'}。`"
+        :message="`不可撤销，${dangerTarget?.type === 'group' ? '之后要重新被邀请或申请入群' : '之后要对方重新添加'}。`"
       />
 
       <!-- 群主退群在多数协议端等同解散，索性显式让用户选，避免以为只是退出 -->
