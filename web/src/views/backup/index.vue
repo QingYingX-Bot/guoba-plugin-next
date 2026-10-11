@@ -9,7 +9,7 @@
  * 轮询会中断（任务本身在后端继续跑，但页面上看不到实时进度了）。
  */
 import { ref, watch } from 'vue'
-import { Tabs, TabPane } from 'ant-design-vue'
+import { Card, Tabs, TabPane } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
 import CreatePanel from './CreatePanel.vue'
 import PacksPanel from './PacksPanel.vue'
@@ -45,53 +45,63 @@ function onCreated() {
       搬家时下载一个包，在新机器上传后一键还原。
     </p>
 
-    <Tabs v-model:activeKey="activeTab" class="g-backup-tabs">
-      <TabPane key="create">
-        <template #tab>
-          <span class="g-tab-label">
-            <GIcon icon="ant-design:save-outlined" :size="14" />
-            新建备份
-          </span>
-        </template>
-        <CreatePanel v-if="seen.includes('create')" @created="onCreated" />
-      </TabPane>
+    <Card :bordered="false" class="g-bk-surface">
+      <Tabs v-model:activeKey="activeTab" class="g-backup-tabs">
+        <TabPane key="create">
+          <template #tab>
+            <span class="g-tab-label">
+              <GIcon icon="ant-design:save-outlined" :size="14" />
+              新建备份
+            </span>
+          </template>
+          <CreatePanel v-if="seen.includes('create')" @created="onCreated" />
+        </TabPane>
 
-      <TabPane key="packs">
-        <template #tab>
-          <span class="g-tab-label">
-            <GIcon icon="ant-design:folder-outlined" :size="14" />
-            备份管理
-          </span>
-        </template>
-        <PacksPanel v-if="seen.includes('packs')" ref="packsRef" @restore="onRestore" />
-      </TabPane>
+        <TabPane key="packs">
+          <template #tab>
+            <span class="g-tab-label">
+              <GIcon icon="ant-design:folder-outlined" :size="14" />
+              备份管理
+            </span>
+          </template>
+          <PacksPanel v-if="seen.includes('packs')" ref="packsRef" @restore="onRestore" />
+        </TabPane>
 
-      <TabPane key="restore">
-        <template #tab>
-          <span class="g-tab-label">
-            <GIcon icon="ant-design:rollback-outlined" :size="14" />
-            还原
-          </span>
-        </template>
-        <RestorePanel v-if="seen.includes('restore')" :file="restoreFile" />
-      </TabPane>
+        <TabPane key="restore">
+          <template #tab>
+            <span class="g-tab-label">
+              <GIcon icon="ant-design:rollback-outlined" :size="14" />
+              还原
+            </span>
+          </template>
+          <RestorePanel v-if="seen.includes('restore')" :file="restoreFile" />
+        </TabPane>
 
-      <TabPane key="schedule">
-        <template #tab>
-          <span class="g-tab-label">
-            <GIcon icon="ant-design:clock-circle-outlined" :size="14" />
-            定时备份
-          </span>
-        </template>
-        <SchedulePanel v-if="seen.includes('schedule')" />
-      </TabPane>
-    </Tabs>
+        <TabPane key="schedule">
+          <template #tab>
+            <span class="g-tab-label">
+              <GIcon icon="ant-design:clock-circle-outlined" :size="14" />
+              定时备份
+            </span>
+          </template>
+          <SchedulePanel v-if="seen.includes('schedule')" />
+        </TabPane>
+      </Tabs>
+    </Card>
   </div>
 </template>
 
 <style scoped>
 .g-backup {
   min-height: 100%;
+}
+
+.g-bk-surface :deep(.ant-card-body) {
+  padding: 16px 18px 18px;
+}
+
+.g-bk-surface :deep(.ant-collapse-content) {
+  background: transparent;
 }
 
 /* ant 的 Tabs 内容区不带上边距，内容会顶着标签栏的下边线 */
