@@ -1,0 +1,1 @@
+import{bt as e}from"./antd-BmCySZMB.js";import{i as t}from"./index-C1XC6_i6.js";function n(){let n=t();return{brand:e(()=>n.effectivePrimary)}}export{n as t};
