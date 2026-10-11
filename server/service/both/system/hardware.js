@@ -25,6 +25,51 @@ let si
  */
 let hasGpuMetrics = null
 
+/**
+ * 慢指标缓存时长。
+ *
+ * Windows 上这两个是开销大头：`si.graphics()` 一次要起 5~6 个 PowerShell 进程
+ * （Win32_VideoController、win32_desktopmonitor、WMI 显示器、System.Windows.Forms…），
+ * `si.cpuTemperature()` 还要再补一个，而单个 PowerShell 的启动就要几百毫秒到数秒。
+ * 首页每 5 秒轮询一次状态 —— 不缓存的话，Windows 机器会不停地起系统命令，
+ * 状态自然「读得慢」，整个面板也跟着发卡。
+ *
+ * 显卡占用与 CPU 温度变化本就慢，缓十几秒到一分钟完全不影响观感。
+ */
+const GPU_TTL = 15 * 1000
+const CPU_TEMP_TTL = 60 * 1000
+
+/**
+ * 带 TTL 与并发合并的记忆化：没过期直接返回，重算期间后来的调用共用同一个 promise。
+ * 首页轮询 + 多开的标签页会同时打进来，不合并就是同一条系统命令跑好几遍。
+ */
+function memo(ttl, fn) {
+  let at = 0
+  let has = false
+  let value
+  let pending = null
+  return async () => {
+    if (has && Date.now() - at < ttl) {
+      return value
+    }
+    if (pending) {
+      return pending
+    }
+    pending = Promise.resolve()
+      .then(fn)
+      .then((v) => {
+        value = v
+        has = true
+        at = Date.now()
+        return v
+      })
+      .finally(() => {
+        pending = null
+      })
+    return pending
+  }
+}
+
 async function loadSi() {
   if (si !== undefined) return si
   try {
@@ -100,8 +145,8 @@ async function readCore(lib) {
   return out
 }
 
-/** 显卡：型号、占用、显存、温度 */
-async function readGpu(lib) {
+/** 显卡：型号、占用、显存、温度（原样读一次，对外的 readGpu 走缓存） */
+async function readGpuRaw(lib) {
   if (hasGpuMetrics === false) return null
   const {controllers} = await lib.graphics()
   const card = controllers?.find((it) => it?.utilizationGpu != null && it?.memoryTotal)
@@ -123,8 +168,8 @@ async function readGpu(lib) {
   }
 }
 
-/** CPU 温度。虚拟机和不少云主机读不到，返回 0 表示没有 */
-async function readCpuTemp(lib) {
+/** CPU 温度。虚拟机和不少云主机读不到，返回 0 表示没有（原样读一次，对外的 readCpuTemp 走缓存） */
+async function readCpuTempRaw(lib) {
   try {
     const t = await lib.cpuTemperature()
     return Number(t?.main) > 0 ? Number(t.main) : 0
@@ -132,6 +177,17 @@ async function readCpuTemp(lib) {
     return 0
   }
 }
+
+// 显卡与 CPU 温度是 Windows 上的开销大头，统一走缓存（原因见 GPU_TTL / CPU_TEMP_TTL 的说明）
+const readGpu = memo(GPU_TTL, async () => {
+  const lib = await loadSi()
+  return lib ? readGpuRaw(lib).catch(() => null) : null
+})
+
+const readCpuTemp = memo(CPU_TEMP_TTL, async () => {
+  const lib = await loadSi()
+  return lib ? readCpuTempRaw(lib) : 0
+})
 
 /** 内存盘 / 容器叠加层 / 只读镜像，这些混进来会把容量算歪 */
 const IGNORE_FS = /^(udev|tmpfs|devtmpfs|overlay|overlay2|squashfs|shm|none|ramfs|fuse\.\w+)$/i
@@ -195,8 +251,8 @@ export async function collect() {
       logger.debug?.(`[Guoba] 读取 CPU / 内存失败：${err.message}`)
       return {}
     }),
-    readGpu(lib).catch(() => null),
-    readCpuTemp(lib),
+    readGpu().catch(() => null),
+    readCpuTemp(),
     readDisks(lib).catch((err) => {
       logger.debug?.(`[Guoba] 读取磁盘失败：${err.message}`)
       return []
@@ -220,4 +276,13 @@ export async function collect() {
     gpu,
     disks,
   }
+}
+
+/**
+ * 预热上面那两个慢指标，别让第一次打开首页卡在 PowerShell 上。
+ * 失败无所谓 —— 缓存没填上，下次照常重算。
+ */
+export function warmupDynamic() {
+  readGpu().catch(() => {})
+  readCpuTemp().catch(() => {})
 }

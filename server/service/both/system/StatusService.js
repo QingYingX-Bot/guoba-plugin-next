@@ -2,11 +2,36 @@ import os from 'os'
 import moment from 'moment'
 import {Service} from '#guoba.framework'
 import {diskInfo} from '#guoba.libs'
-import {collect as collectHardware, warmup as warmupHardware} from './hardware.js'
+import {collect as collectHardware, warmup as warmupHardware, warmupDynamic} from './hardware.js'
 import {isFakeAccount} from '../../../../utils/account.js'
 
 /** 采样两次 /proc 计算 CPU 占用的间隔 */
 const CPU_SAMPLE_INTERVAL = 200
+
+/**
+ * 硬件采集的超时上限。
+ *
+ * Windows 上采集要起若干 PowerShell 进程，个别机器（尤其是无桌面会话 / 驱动异常时）
+ * 会出现某条 WMI 查询迟迟不返回的情况 —— 那就成了「状态一直转圈」。超时后整块退回
+ * `os` 的基础数据，少几项但页面照常出。超时不会掐掉底层调用，它算完了照样填进缓存。
+ */
+const HARDWARE_TIMEOUT = 5000
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`采集超时（${ms}ms）`)), ms)
+    Promise.resolve(promise).then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
 
 /**
  * 只统计真实磁盘，过滤内存盘和容器叠加层，
@@ -29,6 +54,9 @@ export class StatusService extends Service {
     super(app)
     // 预热硬件静态信息（CPU 型号、内存条频率），别让第一次打开首页等在这儿
     warmupHardware().catch(() => {})
+    // 显卡占用 / CPU 温度在 Windows 上很贵（几条 PowerShell），一并预热，
+    // 这样第一次打开的首页命中的是缓存，而不是现起一堆系统命令
+    warmupDynamic()
   }
 
   /** 上次为磁盘失败打日志的时刻，见 {@link DISK_WARN_INTERVAL} */
@@ -117,7 +145,7 @@ export class StatusService extends Service {
     // Windows 上 loadavg 恒为 [0,0,0]，前端据此隐藏该项
     const [load1, load5, load15] = os.loadavg()
 
-    const hw = await collectHardware().catch(() => null)
+    const hw = await withTimeout(collectHardware(), HARDWARE_TIMEOUT).catch(() => null)
 
     // CPU 占用：si 没给就自己采样两次算
     const cpuPercent = typeof hw?.cpu?.percent === 'number'
