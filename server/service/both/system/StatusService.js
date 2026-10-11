@@ -9,13 +9,15 @@ import {isFakeAccount} from '../../../../utils/account.js'
 const CPU_SAMPLE_INTERVAL = 200
 
 /**
- * 硬件采集的超时上限。
+ * 硬件指标的后台刷新间隔 / 首次请求的最长等待。
  *
- * Windows 上采集要起若干 PowerShell 进程，个别机器（尤其是无桌面会话 / 驱动异常时）
- * 会出现某条 WMI 查询迟迟不返回的情况 —— 那就成了「状态一直转圈」。超时后整块退回
- * `os` 的基础数据，少几项但页面照常出。超时不会掐掉底层调用，它算完了照样填进缓存。
+ * 采集要起 PowerShell（Windows）、读系统接口，还可能「卡住不返回」—— 绝不能放在请求路径上：
+ * 首页每 5 秒轮询一次，一旦卡住整块面板就点不动了。这里固定节奏在后台采，
+ * 请求只读最近一次的快照（最多旧一个周期）。首次打开面板时快照可能还没好，
+ * 最多等 HW_FIRST_WAIT 就退回 `os` 的基础数据，少几项但页面照常出。
  */
-const HARDWARE_TIMEOUT = 5000
+const HW_REFRESH_INTERVAL = 10 * 1000
+const HW_FIRST_WAIT = 1200
 
 function withTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
@@ -57,6 +59,38 @@ export class StatusService extends Service {
     // 显卡占用 / CPU 温度在 Windows 上很贵（几条 PowerShell），一并预热，
     // 这样第一次打开的首页命中的是缓存，而不是现起一堆系统命令
     warmupDynamic()
+    this.#startHwRefresh()
+  }
+
+  /** 上一次采到的硬件快照；请求只读它，永远不等采集 */
+  #hwSnapshot = null
+  /** 后台采集是否正在进行，避免上一轮没回来又叠一轮 */
+  #hwRefreshing = false
+  #hwTimer = null
+
+  /**
+   * 后台按固定节奏刷新硬件快照。
+   *
+   * 把采集彻底挪出请求路径 —— 慢也好、卡也好，最多影响快照的新鲜度，
+   * 不会让首页那几个轮询请求排队等在那儿。
+   */
+  #startHwRefresh() {
+    const tick = () => {
+      if (this.#hwRefreshing) return
+      this.#hwRefreshing = true
+      collectHardware()
+        .then((v) => {
+          this.#hwSnapshot = v
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.#hwRefreshing = false
+        })
+    }
+    tick()
+    this.#hwTimer = setInterval(tick, HW_REFRESH_INTERVAL)
+    // 别因为这个定时器拖住进程退出
+    this.#hwTimer.unref?.()
   }
 
   /** 上次为磁盘失败打日志的时刻，见 {@link DISK_WARN_INTERVAL} */
@@ -145,7 +179,9 @@ export class StatusService extends Service {
     // Windows 上 loadavg 恒为 [0,0,0]，前端据此隐藏该项
     const [load1, load5, load15] = os.loadavg()
 
-    const hw = await withTimeout(collectHardware(), HARDWARE_TIMEOUT).catch(() => null)
+    // 硬件快照由后台定时刷新，这里直接读。首屏可能还没采完，最多等一小会儿；
+    // 等不到就用 `os` 的基础数据（少几项但页面照常出），绝不把请求挂在采集上。
+    const hw = this.#hwSnapshot ?? await withTimeout(collectHardware(), HW_FIRST_WAIT).catch(() => null)
 
     // CPU 占用：si 没给就自己采样两次算
     const cpuPercent = typeof hw?.cpu?.percent === 'number'

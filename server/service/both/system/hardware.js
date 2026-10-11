@@ -40,28 +40,71 @@ const GPU_TTL = 15 * 1000
 const CPU_TEMP_TTL = 60 * 1000
 
 /**
- * 带 TTL 与并发合并的记忆化：没过期直接返回，重算期间后来的调用共用同一个 promise。
- * 首页轮询 + 多开的标签页会同时打进来，不合并就是同一条系统命令跑好几遍。
+ * 单个硬件读取的硬超时。
+ *
+ * si 内部的 child_process **没有超时**（`lib/util.js` 的 exec 只设了 maxBuffer），
+ * PowerShell 一旦卡住就永远不返回 —— Windows 上 `System.Windows.Forms.Screen::AllScreens`
+ * 这类调用在无桌面会话 / 某些驱动下就会挂死。不设超时的话那个 promise 永远不 resolve，
+ * 后面每个请求都跟着一起等，面板表现就是「状态一直在加载中、点不动」。
  */
-function memo(ttl, fn) {
+const READ_TIMEOUT = 6 * 1000
+
+/** 超时 / 报错后的熔断时长：这期间不再去碰它，免得反复堆卡死的系统进程 */
+const BREAK_TTL = 10 * 60 * 1000
+
+/** 给 promise 加一个硬超时 */
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`读取超时（${ms}ms）`)), ms)
+    Promise.resolve(promise).then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
+/**
+ * 带 TTL、并发合并、超时与熔断的记忆化。
+ *
+ * - 成功：按 `ttl` 缓存；
+ * - 超时或报错：按 `breakTtl` 缓存（熔断），这期间直接返回 `fallback`。
+ *   卡死的 PowerShell 不会因为「多试几次」就好，只会让每个请求都白等一个超时。
+ * - 重算期间后来的调用共用同一个 promise（首页轮询 + 多开标签页会同时打进来）。
+ */
+function memo({ttl, timeout = 0, breakTtl = ttl, fallback}, fn) {
   let at = 0
+  let value = fallback
   let has = false
-  let value
+  let ok = false
   let pending = null
   return async () => {
-    if (has && Date.now() - at < ttl) {
+    if (has && Date.now() - at < (ok ? ttl : breakTtl)) {
       return value
     }
     if (pending) {
       return pending
     }
     pending = Promise.resolve()
-      .then(fn)
+      .then(() => (timeout > 0 ? withTimeout(fn(), timeout) : fn()))
       .then((v) => {
         value = v
+        ok = true
+      })
+      .catch((e) => {
+        ok = false
+        logger.warn?.(`[Guoba] 硬件指标读取失败，本次跳过：${e?.message || e}`)
+        value = fallback
+      })
+      .then(() => {
         has = true
         at = Date.now()
-        return v
+        return value
       })
       .finally(() => {
         pending = null
@@ -178,16 +221,22 @@ async function readCpuTempRaw(lib) {
   }
 }
 
-// 显卡与 CPU 温度是 Windows 上的开销大头，统一走缓存（原因见 GPU_TTL / CPU_TEMP_TTL 的说明）
-const readGpu = memo(GPU_TTL, async () => {
-  const lib = await loadSi()
-  return lib ? readGpuRaw(lib).catch(() => null) : null
-})
+// 显卡与 CPU 温度是 Windows 上的开销大头，统一走缓存 + 超时 + 熔断（原因见上面的常量说明）
+const readGpu = memo(
+  {ttl: GPU_TTL, timeout: READ_TIMEOUT, breakTtl: BREAK_TTL, fallback: null},
+  async () => {
+    const lib = await loadSi()
+    return lib ? readGpuRaw(lib) : null
+  },
+)
 
-const readCpuTemp = memo(CPU_TEMP_TTL, async () => {
-  const lib = await loadSi()
-  return lib ? readCpuTempRaw(lib) : 0
-})
+const readCpuTemp = memo(
+  {ttl: CPU_TEMP_TTL, timeout: READ_TIMEOUT, breakTtl: BREAK_TTL, fallback: 0},
+  async () => {
+    const lib = await loadSi()
+    return lib ? readCpuTempRaw(lib) : 0
+  },
+)
 
 /** 内存盘 / 容器叠加层 / 只读镜像，这些混进来会把容量算歪 */
 const IGNORE_FS = /^(udev|tmpfs|devtmpfs|overlay|overlay2|squashfs|shm|none|ramfs|fuse\.\w+)$/i
@@ -200,6 +249,8 @@ const IGNORE_FS = /^(udev|tmpfs|devtmpfs|overlay|overlay2|squashfs|shm|none|ramf
  */
 const DISK_TTL = 30 * 1000
 let diskCache = {at: 0, list: []}
+/** fsSize 卡过之后的熔断截止时刻，见 readDisks */
+let diskBrokenUntil = 0
 
 /**
  * 所有磁盘。
@@ -209,8 +260,16 @@ let diskCache = {at: 0, list: []}
  */
 async function readDisks(lib) {
   const now = Date.now()
+  // 刚卡过一次就先别碰：fsSize 在 Windows 上也是 PowerShell，卡死一次能拖垮一整轮采集
+  if (now < diskBrokenUntil) return diskCache.list
   if (diskCache.list.length && now - diskCache.at < DISK_TTL) return diskCache.list
-  const list = await lib.fsSize()
+  let list
+  try {
+    list = await withTimeout(lib.fsSize(), READ_TIMEOUT)
+  } catch (e) {
+    diskBrokenUntil = Date.now() + BREAK_TTL
+    throw e
+  }
   if (!Array.isArray(list)) return []
   const seen = new Set()
   const out = []
