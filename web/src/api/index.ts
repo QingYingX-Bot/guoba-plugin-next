@@ -565,11 +565,36 @@ export interface RedisValue {
   truncated: boolean
 }
 
-export const apiRedisInfo = () =>
-  get<{ dbSize: number; memory: string }>('/data/redis/info', undefined, { showError: false })
+export interface RedisInfo {
+  dbSize: number
+  memory: string
+}
 
-export const apiRedisScan = (params: { cursor?: number; match?: string; count?: number }) =>
-  get<RedisScanResult>('/data/redis/scan', params)
+/**
+ * key 的「顶层」：第一个 `:` 之前那一段（整条 key 没有 `:` 就是它自己）。
+ * 面板「加载全部」时按它勾选要加载哪几层。
+ */
+export interface RedisNamespace {
+  name: string
+  count: number
+  /** 是不是 QQBot-Plugin 的消息记录（wind-msg:* 等，一条消息一个 key 的那种） */
+  message: boolean
+}
+
+export const apiRedisInfo = () =>
+  get<RedisInfo>('/data/redis/info', undefined, { showError: false })
+
+/** 当前匹配到的 key 分布在哪些顶层下，各多少条。只回聚合，不带 key 本体 */
+export const apiRedisNamespaces = (match: string) =>
+  get<RedisNamespace[]>('/data/redis/namespaces', { match })
+
+export const apiRedisScan = (params: {
+  cursor?: number
+  match?: string
+  count?: number
+  /** 不加载哪些顶层，逗号分隔，见 RedisNamespace.name */
+  exclude?: string
+}) => get<RedisScanResult>('/data/redis/scan', params)
 
 export const apiRedisGet = (key: string) => get<RedisValue>('/data/redis/get', { key })
 

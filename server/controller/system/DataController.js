@@ -18,6 +18,7 @@ export class DataController extends ApiController {
     // Redis
     this.get('/redis/info', this.redisInfo)
     this.get('/redis/scan', this.redisScan)
+    this.get('/redis/namespaces', this.redisNamespaces)
     this.get('/redis/get', this.redisGet)
     this.post('/redis/set', this.redisSet)
     this.post('/redis/expire', this.redisExpire)
@@ -41,8 +42,15 @@ export class DataController extends ApiController {
   }
 
   async redisScan(req) {
-    const {cursor, match, count} = req.query ?? {}
-    return Result.ok(await this.dataService.redisScan({cursor, match, count}))
+    const {cursor, match, count, exclude} = req.query ?? {}
+    return Result.ok(await this.dataService.redisScan({
+      cursor, match, count,
+      exclude: typeof exclude === 'string' && exclude ? exclude.split(',') : [],
+    }))
+  }
+
+  async redisNamespaces(req) {
+    return Result.ok(await this.dataService.redisNamespaces({match: req.query?.match}))
   }
 
   async redisGet(req) {

@@ -4,6 +4,31 @@ import {Service, GuobaError} from '#guoba.framework'
 import {_paths} from '#guoba.platform'
 
 /**
+ * QQBot-Plugin 消息记录所在的「顶层」。
+ *
+ * 与 QQBot-Plugin/lib/message.js 的写入一一对应（键名说明见 model/qqRedisStore.js）：
+ * 用户消息 `wind-msg:*`、机器人消息 `wind-bot-msg:*`、消息索引 `wind-msg-idx:*`、
+ * 活跃会话 `wind-active-*`。面板「加载全部」的选择框据此给这几层打上「消息记录」标记、
+ * 默认不勾 —— 其中 `wind-msg-idx` 是**一条消息一个 key**，量最大。
+ */
+const QQBOT_MSG_TOPS = new Set([
+  'wind-msg',
+  'wind-bot-msg',
+  'wind-msg-idx',
+  'wind-active-group',
+  'wind-active-private',
+])
+
+/** 顶层统计最多翻多少轮，防数据集一直变动导致循环停不下来 */
+const NAMESPACE_MAX_ROUNDS = 500
+
+/** key 的顶层：第一个 `:` 之前那一段；整条 key 里没有 `:` 就是它自己 */
+function topLevelOf(key) {
+  const i = key.indexOf(':')
+  return i === -1 ? key : key.slice(0, i)
+}
+
+/**
  * 数据浏览服务：Redis 与 SQLite 的读写。
  *
  * Redis 直接复用 Yunzai 启动时建好的全局客户端（lib/config/redis.js），
@@ -34,8 +59,9 @@ export default class DataService extends Service {
    * @param cursor 上次返回的游标，首次传 0
    * @param match glob 模式，如 `Yz:*`
    * @param count 每轮扫描的建议数量，实际返回数会浮动
+   * @param exclude 不返回哪些「顶层」下的 key，见 {@link redisNamespaces}
    */
-  async redisScan({cursor = 0, match = '*', count = 100} = {}) {
+  async redisScan({cursor = 0, match = '*', count = 100, exclude = []} = {}) {
     const client = this.#client()
     count = Math.min(Math.max(Number(count) || 100, 10), 1000)
     const res = await client.scan(Number(cursor) || 0, {MATCH: match || '*', COUNT: count})
@@ -43,17 +69,55 @@ export default class DataService extends Service {
     const nextCursor = Array.isArray(res) ? res[0] : res.cursor
     const keys = Array.isArray(res) ? res[1] : res.keys
 
-    // 附上类型和过期时间，列表里直接能看出来是什么
+    // 不要的顶层在取 type/ttl 之前就滤掉 —— 这些 key 本来就不展示，少跑两趟 Redis
+    const skip = Array.isArray(exclude) ? exclude.filter(Boolean) : []
+    const wanted = skip.length
+      ? (keys ?? []).filter(key => !skip.includes(topLevelOf(key)))
+      : (keys ?? [])
+
+    /**
+     * 附上类型和过期时间，列表里直接能看出来是什么。
+     */
     const items = []
-    for (const key of keys ?? []) {
-      try {
-        const [type, ttl] = await Promise.all([client.type(key), client.ttl(key)])
-        items.push({key, type, ttl})
-      } catch {
-        // 扫描过程中 key 可能刚好被删掉，跳过即可
+    const BATCH = 200
+    for (let i = 0; i < wanted.length; i += BATCH) {
+      const part = await Promise.all(wanted.slice(i, i + BATCH).map(async (key) => {
+        try {
+          const [type, ttl] = await Promise.all([client.type(key), client.ttl(key)])
+          return {key, type, ttl}
+        } catch {
+          // 扫描过程中 key 可能刚好被删掉，跳过即可
+          return null
+        }
+      }))
+      for (const item of part) {
+        if (item) items.push(item)
       }
     }
     return {cursor: Number(nextCursor) || 0, items}
+  }
+
+  /**
+   * 当前匹配到的 key 分布在哪些「顶层」下，各有多少条。
+   */
+  async redisNamespaces({match = '*'} = {}) {
+    const client = this.#client()
+    const counts = new Map()
+    let cursor = 0
+    let rounds = 0
+    do {
+      const res = await client.scan(cursor, {MATCH: match || '*', COUNT: 1000})
+      cursor = Number(Array.isArray(res) ? res[0] : res.cursor) || 0
+      for (const key of (Array.isArray(res) ? res[1] : res.keys) ?? []) {
+        const top = topLevelOf(key)
+        counts.set(top, (counts.get(top) ?? 0) + 1)
+      }
+      rounds++
+    } while (cursor !== 0 && rounds < NAMESPACE_MAX_ROUNDS)
+
+    return [...counts]
+      .map(([name, count]) => ({name, count, message: QQBOT_MSG_TOPS.has(name)}))
+      .sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name))
   }
 
   /** Redis 库里的 key 总数与内存占用，用于页面顶部概览 */
