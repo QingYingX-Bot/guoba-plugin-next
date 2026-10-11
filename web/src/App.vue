@@ -4,6 +4,7 @@ import { ConfigProvider } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { useAppStore } from '@/stores/app'
 import { useThemeConfig } from '@/theme'
+import { getPopupContainer } from '@/utils/popup'
 
 const appStore = useAppStore()
 const themeConfig = computed(() =>
@@ -27,7 +28,11 @@ watch(
 </script>
 
 <template>
-  <ConfigProvider :locale="zhCN" :theme="themeConfig">
+  <ConfigProvider
+    :locale="zhCN"
+    :theme="themeConfig"
+    :get-popup-container="getPopupContainer"
+  >
     <RouterView />
   </ConfigProvider>
 </template>

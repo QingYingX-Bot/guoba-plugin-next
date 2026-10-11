@@ -35,13 +35,26 @@ const links = [
   },
 ]
 
-const envInfo = computed(() => [
+/**
+ * 「运行环境」表的列宽策略。
+ */
+const NOWRAP = { whiteSpace: 'nowrap' } as const
+const WRAP = { whiteSpace: 'normal', overflowWrap: 'anywhere' } as const
+
+interface EnvItem {
+  label: string
+  value: string
+  span?: number
+  wrap?: boolean
+}
+
+const envInfo = computed<EnvItem[]>(() => [
   { label: '锅巴版本', value: `v${GUOBA_VERSION}` },
   { label: 'Yunzai 版本', value: YUNZAI_VERSION },
   { label: '接口版本', value: API_PREFIX },
   { label: '登录账号', value: String(auth.user?.username ?? '-') },
-  { label: 'Bot 昵称', value: auth.user?.realName || '-' },
-  { label: 'UA', value: navigator.userAgent, span: 2 },
+  { label: 'Bot 昵称', value: auth.user?.realName || '-', span: 2 },
+  { label: 'UA', value: navigator.userAgent, span: 2, wrap: true },
 ])
 
 function open(url: string) {
@@ -96,17 +109,28 @@ function confirmRestart(type: 'guoba' | 'bot') {
     <Row :gutter="[16, 16]">
       <Col :xs="24" :lg="14">
         <Card :bordered="false" title="运行环境">
-          <Descriptions :column="{ xs: 1, sm: 2 }" size="small" bordered>
-            <DescriptionsItem
-              v-for="item in envInfo"
-              :key="item.label"
-              :label="item.label"
-              :span="item.span"
+          <div class="g-about-env">
+            <Descriptions
+              :column="{ xs: 1, sm: 2 }"
+              size="small"
+              bordered
+              :label-style="NOWRAP"
             >
-              <!-- 版本号、UA 这些是报问题时要贴出去的，单独开选中 -->
-              <span class="g-about-val g-selectable">{{ item.value }}</span>
-            </DescriptionsItem>
-          </Descriptions>
+              <DescriptionsItem
+                v-for="item in envInfo"
+                :key="item.label"
+                :label="item.label"
+                :span="item.span"
+                :content-style="item.wrap ? WRAP : NOWRAP"
+              >
+                <!-- 版本号、UA 这些是报问题时要贴出去的，单独开选中 -->
+                <span
+                  class="g-about-val g-selectable"
+                  :class="{ 'is-ua': item.wrap }"
+                >{{ item.value }}</span>
+              </DescriptionsItem>
+            </Descriptions>
+          </div>
         </Card>
       </Col>
 
@@ -182,8 +206,17 @@ function confirmRestart(type: 'guoba' | 'bot') {
   color: var(--g-text-sub);
 }
 
+.g-about-env {
+  overflow-x: auto;
+}
+
 .g-about-val {
-  word-break: break-all;
+  white-space: nowrap;
+}
+
+.g-about-val.is-ua {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .g-about-links {
