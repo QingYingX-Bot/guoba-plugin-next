@@ -312,6 +312,9 @@ export const apiQueryFriendList = (params: PageQuery) =>
 export const apiQueryGroupList = (params: PageQuery) =>
   get<any>('/oicq/group/list', params)
 
+/** 在线账号，账号管理页按它过滤好友 / 群列表（字段同沙盒的 SandboxBot） */
+export const apiQueryBots = () => get<SandboxBot[]>('/oicq/bots')
+
 export const apiPickUser = (qq: string | number) => get<any>('/oicq/pick/user', { qq })
 
 export const apiPickGroup = (groupId: string | number) =>

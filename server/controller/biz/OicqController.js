@@ -1,7 +1,7 @@
 import {autowired, Pager, Result} from '#guoba.framework'
 import {ApiController} from '#guoba.platform'
 import {groupAvatarUrl, userAvatarUrl} from '../../service/both/model/avatar.js'
-import {ensureContacts} from '../../service/both/model/bots.js'
+import {ensureContacts, listBots} from '../../service/both/model/bots.js'
 
 /** QQ相关操作 */
 export class OicqController extends ApiController {
@@ -23,6 +23,9 @@ export class OicqController extends ApiController {
     // 均为不可逆操作，用 delete 语义并要求前端二次确认
     this.delete('/friend', this.deleteFriend)
     this.delete('/group', this.quitGroup)
+
+    // 在线账号：好友 / 群列表按账号过滤，前端得先知道有哪些号可选
+    this.get('/bots', async () => Result.ok(listBots()))
 
     // 列表里每项都带算好的 avatar（QQBot 的 openid 前端拼不出来）
     this.get('/friend/list', this.queryFriendList)
@@ -84,12 +87,12 @@ export class OicqController extends ApiController {
   }
 
   async queryGroupList(req) {
-    let {pageNo, pageSize, group_id, query_group_id, query_name} = req.query
+    let {pageNo, pageSize, group_id, query_group_id, query_name, bot_id} = req.query
     pageNo = !pageNo ? 1 : Number.parseInt(pageNo)
     pageSize = !pageSize ? 10 : Number.parseInt(pageSize)
 
     // 缓存空着先补一次，否则协议端刚起来时列表是空的（见 ensureContacts）
-    await ensureContacts('group')
+    await ensureContacts('group', bot_id)
     let groupList = Bot.getGroupMap?.() || Bot.getGroupList()
     let list = []
     let filter = (_) => true
@@ -116,6 +119,9 @@ export class OicqController extends ApiController {
     }
 
     for (let [, item] of groupList) {
+      // Bot.getGroupMap() 是把所有账号合起来的，按选中的账号再滤一道。
+      // bot_id 是宿主按数字 Uin 塞进去的，前端传回来是字符串，所以两边都转成字符串比
+      if (bot_id && String(item.bot_id) !== String(bot_id)) continue
       if (filter(item)) {
         list.push(item)
       }
@@ -131,11 +137,11 @@ export class OicqController extends ApiController {
   }
 
   async queryFriendList(req) {
-    let {pageNo, pageSize, user_id, query_qq, query_name} = req.query
+    let {pageNo, pageSize, user_id, query_qq, query_name, bot_id} = req.query
     pageNo = !pageNo ? 1 : Number.parseInt(pageNo)
     pageSize = !pageSize ? 10 : Number.parseInt(pageSize)
 
-    await ensureContacts('friend')
+    await ensureContacts('friend', bot_id)
     let friendList = Bot.getFriendMap?.() || Bot.getFriendList()
     let list = []
     let filter = (_) => true
@@ -162,6 +168,8 @@ export class OicqController extends ApiController {
     }
 
     for (let [, item] of friendList) {
+      // 同 queryGroupList：合并表按选中账号再滤一道
+      if (bot_id && String(item.bot_id) !== String(bot_id)) continue
       if (filter(item)) {
         list.push(item)
       }

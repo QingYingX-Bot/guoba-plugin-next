@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   Alert,
   Avatar,
@@ -12,6 +12,7 @@ import {
   Progress,
   RadioButton,
   RadioGroup,
+  Select,
   Table,
   Tabs,
   TabPane,
@@ -26,12 +27,14 @@ import {
   apiCancelBroadcast,
   apiDeleteFriend,
   apiGetBroadcast,
+  apiQueryBots,
   apiQueryFriendList,
   apiQueryGroupList,
   apiQuitGroup,
   apiStartBroadcast,
   type BroadcastTarget,
   type BroadcastTask,
+  type SandboxBot,
 } from '@/api'
 
 /**
@@ -73,6 +76,10 @@ const activeTab = ref('friend')
 const friend = reactive(createPageState())
 const group = reactive(createPageState())
 
+/** 在线账号。好友 / 群列表都只显示选中的这个号的（后端按 item.bot_id 滤） */
+const bots = ref<SandboxBot[]>([])
+const botId = ref('')
+
 const friendColumns = [
   { title: '好友', key: 'user', width: 260 },
   { title: 'QQ', dataIndex: 'user_id', key: 'user_id', width: 170 },
@@ -92,6 +99,7 @@ async function loadFriends() {
   friend.loading = true
   try {
     const params: Record<string, any> = { pageNo: friend.pageNo, pageSize: friend.pageSize }
+    if (botId.value) params.bot_id = botId.value
     const kw = friend.keyword.trim()
     if (kw) {
       // 纯数字按 QQ 号查，否则按昵称/备注查
@@ -113,6 +121,7 @@ async function loadGroups() {
   group.loading = true
   try {
     const params: Record<string, any> = { pageNo: group.pageNo, pageSize: group.pageSize }
+    if (botId.value) params.bot_id = botId.value
     const kw = group.keyword.trim()
     if (kw) {
       if (/^\d+$/.test(kw)) params.query_group_id = kw
@@ -240,6 +249,7 @@ async function fetchAll(): Promise<any[]> {
   const s = castState.value
   const isGroup = castType.value === 'group'
   const params: Record<string, any> = { pageNo: 1, pageSize: Math.max(s.total, 1) }
+  if (botId.value) params.bot_id = botId.value
   const kw = s.keyword.trim()
   if (kw) {
     if (/^\d+$/.test(kw)) params[isGroup ? 'query_group_id' : 'query_qq'] = kw
@@ -428,7 +438,31 @@ function roleText(role?: string) {
   return { text: '成员', color: 'default' }
 }
 
-onMounted(() => {
+/** 拉账号列表，首次进来默认选第一个（真账号排在伪账号前面，见 model/bots.js） */
+async function loadBots() {
+  try {
+    bots.value = (await apiQueryBots()) ?? []
+  } catch {
+    // 取不到就不按账号过滤，退回合并列表
+    bots.value = []
+  }
+  if (!botId.value && bots.value.length) botId.value = bots.value[0].uin
+}
+
+/** 换账号后原来的列表就不对了：两个 tab 都从第一页重来，勾选也清掉（跨账号勾选没意义） */
+watch(botId, (_val, old) => {
+  // 首次进来是 loadBots 赋的默认值，列表由 onMounted 负责加载，这里别重复请求
+  if (!old) return
+  for (const s of [friend, group]) {
+    s.pageNo = 1
+    s.selected = []
+  }
+  loadFriends()
+  loadGroups()
+})
+
+onMounted(async () => {
+  await loadBots()
   loadFriends()
   loadGroups()
 })
@@ -438,10 +472,23 @@ onMounted(() => {
   <div class="g-page">
     <div class="g-page-head">
       <h2 class="g-page-title">账号管理</h2>
-      <p class="g-page-desc">查看当前 Bot 的好友与群聊列表。</p>
+      <p class="g-page-desc">查看各账号的好友与群聊列表。</p>
     </div>
 
     <Card :bordered="false">
+      <!-- 多账号时得先挑一个号，好友 / 群列表都按它过滤；只有一个号就没什么可挑的 -->
+      <div v-if="bots.length > 1" class="g-acc-bot">
+        <span class="g-acc-bot-label">账号</span>
+        <Select
+          v-model:value="botId"
+          class="g-acc-bot-select"
+          :options="bots.map((b) => ({
+            value: b.uin,
+            label: b.nickname ? `${b.nickname}（${b.uin}）` : b.uin,
+          }))"
+        />
+      </div>
+
       <Tabs v-model:activeKey="activeTab">
         <TabPane key="friend" :tab="`好友（${friend.total}）`">
           <div class="g-acc-bar">
@@ -781,6 +828,24 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+/* 账号选择器独占一行，跟在后面的 Tab 头拉开一点 */
+.g-acc-bot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.g-acc-bot-label {
+  font-size: 13px;
+  color: var(--g-text-sub);
+}
+
+.g-acc-bot-select {
+  width: 280px;
+  max-width: 100%;
 }
 
 /* 群发靠右，跟左边的搜索区分开 */
