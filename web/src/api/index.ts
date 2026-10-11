@@ -738,6 +738,8 @@ export interface SandboxSegment {
   rows?: SandboxButton[][]
   /** markdown 段的正文 */
   content?: string
+  /** markdown 原生模板：正文在 QQ 服务端，本地只有模板 id 与参数，还原不出来 */
+  template?: boolean
   /** 当前模拟的平台不渲染这个段（按钮/markdown 发到 OneBot 那边就是被丢掉的） */
   ignored?: boolean
   /** 无法还原的段的原始 JSON */
@@ -850,6 +852,50 @@ export type MsgBtn = SandboxButton
 
 export type ChatType = 'friend' | 'group'
 
+/**
+ * 输入区的档位。normal / raw 是所有适配器都有的，markdown / ark / media
+ * 只有 QQ 官方机器人（QQBot-Plugin）认
+ */
+export type ChatSendMode = 'normal' | 'raw' | 'markdown' | 'ark' | 'media'
+
+/**
+ * 引用 / 回复的三种口径，对应后端 `send()` 的 replyTo / replyMsgId / replyEventId。
+ *
+ * - quote   落到 `message_reference`，QQ 上显示成一条引用，所有适配器都有
+ * - msgId   官方机器人的「被动回复」（消息体上带 msg_id），只有 QQBot 有
+ * - eventId 同上，带的是 event_id
+ */
+export type ChatReplyMode = 'quote' | 'msgId' | 'eventId'
+
+/** 面板上「这条要回复谁」的状态，name / text 只用来显示 */
+export interface ChatReplyTarget {
+  mode: ChatReplyMode
+  /** quote / msgId 是 message_id，eventId 是 event_id */
+  id: string
+  name: string
+  text: string
+}
+
+/**
+ * 输入区交上来的发送参数，页面按 mode 分派：
+ * raw 走 /chat/send-raw，其余走 /chat/send 的 multipart（mode 转成后端的 kind）。
+ */
+export interface ChatSendPayload {
+  mode: ChatSendMode
+  /** normal / markdown 的正文 */
+  text: string
+  /** raw 档的段数组 JSON */
+  raw: string
+  images: File[]
+  ats: Array<{ qq: string; name: string }>
+  /** ark 档的 `{template_id, kv}` JSON */
+  ark: string
+  /** media 档选中的文件 */
+  files: File[]
+  /** QQBot 的「msg_id 回复」勾选状态 */
+  useMsgIdReply: boolean
+}
+
 /** 活跃摘要：会话 key -> 最后一条 + 未读 */
 export interface ChatActiveItem {
   /** 秒 */
@@ -876,6 +922,11 @@ export interface ChatMsg {
   type: ChatType
   id: string
   messageId: string
+  /**
+   * QQBot 事件 id，被动回复（右键「使用本消息 event_id 回复」）要用。
+   * 别的适配器没有这个概念，是空串。
+   */
+  eventId: string
   /** 向上翻页的游标 */
   messageSeq: string
   /** 秒 */
@@ -891,6 +942,10 @@ export interface ChatMsg {
     title: string
     /** 后端按适配器算好的头像地址，拼不出来时是空串 */
     avatar?: string
+    /** QQBot 才有：不带 `${selfId}:` 前缀的裸 openid */
+    openid?: string
+    /** QQBot 才有 */
+    unionid?: string
   }
   segments: MsgSeg[]
   /** 在面板里撤回过 */

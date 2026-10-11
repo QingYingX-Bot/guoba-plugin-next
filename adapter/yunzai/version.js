@@ -39,6 +39,11 @@ export const {
 export const isDev = (process.argv || []).includes('dev')
 
 /**
+ * 宿主 plugins/ 下有没有这个插件目录。
+ */
+export { hasPlugin }
+
+/**
  * TRSS 系宿主的判定。
  *
  * `isTRSS` 表示的是**能力**而不是某个具体项目：宿主自带 HTTP 服务（能共享端口）、主人配置

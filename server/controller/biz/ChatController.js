@@ -61,11 +61,11 @@ export class ChatController extends ApiController {
     return Result.ok(await this.chatService.getRaw({botId, type, id, messageId}))
   }
 
-  /** 发消息，会真的发到 QQ 上。图片走 multipart（锅巴全局挂的 multer 已把文件放进 req.files） */
+  /** 发消息，会真的发到 QQ 上。文件走 multipart（锅巴全局挂的 multer 已把文件放进 req.files） */
   async send(req) {
-    const {botId, type, id, text, images, replyTo, ats} = req.body ?? {}
+    const {botId, type, id, text, images, replyTo, replyMsgId, replyEventId, ats, kind, ark} = req.body ?? {}
     return Result.ok(await this.chatService.send({
-      botId, type, id, text, images, replyTo, ats,
+      botId, type, id, text, images, replyTo, replyMsgId, replyEventId, ats, kind, ark,
       files: req.files,
     }))
   }

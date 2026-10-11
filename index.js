@@ -38,6 +38,14 @@ if (!passed) {
 
 global.Guoba = {GI, GID, createImport}
 
+// QQBot 消息存储设置（安装 QQBot-Web-Adapter 时由其接管） 
+try {
+  const {initQQBotStorage} = await import('./utils/qqbotStorage.js')
+  initQQBotStorage()
+} catch (e) {
+  logger.error('[Guoba] QQBot 消息存储设置初始化失败', e)
+}
+
 const apps = {}, rule = {}
 
 let appRouter = null

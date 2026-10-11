@@ -7,11 +7,17 @@ import crypto from 'crypto'
  * 沙盒与消息记录都要把「Yunzai 那边的消息」变成前端能渲染的段数组，两边共用一份，
  * 输出结构才严格一致，前端 `components/msg/MsgSegment.vue` 一个组件就能同时伺候两页。
  *
- * 两边的差异只有两个开关：
+ * 两边的差异只有这几个开关：
  * - `rich`：目标平台是否渲染 button / markdown 段（沙盒模拟普通平台时为 false，会标 ignored）
  * - `download`：非 http 的资源（本地路径、Buffer、base64）要不要读进内存资源表。
  *   沙盒截的是插件刚生成的图，只有读盘才看得到；消息记录拿的是 QQ 服务端记录，
  *   段里本来就带直链，读盘既没必要又白占内存，所以传 false。
+ * - `selfId` / `sep`：QQ 官方机器人的 id 是 `${selfId}:${openid}` 复合形式，从正文里
+ *   扒出来的 openid 得拼回这个形式，上层按它查昵称才对得上（见 ChatService 的 #resolveNames）
+ * - `dropFace`：QQ 官方机器人的 face 段是客户端表情 / 表情包的内联标记，网页上还原不了
+ *   （表情包的图另有 image 段），留着只会显示成 `[表情0]`
+ * - `botMarkdown`：这段正文要不要直接当 markdown 渲染。QQBot 那边机器人发的正文
+ *   光靠内容猜会漏掉「只有加粗 / 标题、没有链接」的那种
  */
 
 /** 资源表最多留多少项 */
@@ -124,10 +130,10 @@ export class AssetStore {
  * `{type:'node'}` 的转发消息，这里统一成 `{type, ...}` 的平坦列表。
  *
  * @param msg 消息内容
- * @param opts {{assets?: AssetStore, rich?: boolean, download?: boolean}}
+ * @param opts {{assets?: AssetStore, rich?: boolean, download?: boolean, selfId?: string, sep?: string, dropFace?: boolean, botMarkdown?: boolean}}
  */
 export async function normalizeMsg(msg, opts = {}) {
-  const ctx = {assets: null, rich: true, download: true, ...opts}
+  const ctx = {assets: null, rich: true, download: true, selfId: '', sep: ':', dropFace: false, botMarkdown: false, ...opts}
   const out = []
   await flatten(msg, out, 0, ctx)
   return out
@@ -159,16 +165,27 @@ async function flatten(msg, out, depth, ctx) {
 
   switch (type) {
     case 'text':
-      if (msg.text) out.push({type: 'text', text: String(msg.text)})
+      // 文本段里可能混着 QQ 的内联标签、@ 标记，甚至整段就是 markdown，见 pushText
+      if (msg.text) pushText(msg.text, out, ctx)
       return
-    case 'at':
-      out.push({type: 'at', qq: String(msg.qq ?? msg.id ?? ''), name: msg.name ?? msg.text ?? ''})
+    case 'at': {
+      /**
+       * @全体成员。QQBot 的 at 段对 `all` 也拼了账号前缀（`4015656287:all`），
+       * 照原样显示就是一串号；统一成 `all`，名字给「全体成员」。
+       */
+      const qq = String(msg.qq ?? msg.id ?? '')
+      if (msg.scope === 'all' || qq.split(':').pop() === 'all') {
+        out.push({type: 'at', qq: 'all', name: msg.name || msg.username || msg.text || '全体成员'})
+      } else {
+        out.push({type: 'at', qq, name: msg.name ?? msg.text ?? msg.username ?? ''})
+      }
       return
+    }
     case 'reply':
       out.push({type: 'reply', id: String(msg.id ?? msg.text ?? '')})
       return
     case 'face':
-      out.push({type: 'face', id: String(msg.id ?? '')})
+      if (!ctx.dropFace) out.push({type: 'face', id: String(msg.id ?? '')})
       return
     case 'image':
     case 'record':
@@ -199,34 +216,119 @@ async function flatten(msg, out, depth, ctx) {
 }
 
 /**
- * markdown 段。原生模板（模板 id + params）的内容在 QQ 服务端，本地还原不出来，
- * 只有 content 形式的能渲染，其余照旧摊原始数据。
+ * QQ 客户端才认的内联富文本标签，网页上还原不了，去掉免得露乱码。
+ */
+const QQ_INLINE_TAG_RE = /<(?:faceType|attachmentType)=[^>]*>/g
+
+/**
+ * 文本段里的 @ 标记：`<@$ALL$>`（@全体成员）、`<@openid>` / `<@!openid>`（@人）。
+ */
+const QQ_TEXT_AT_RE = /<@!?\$?ALL\$?>|<@!?([0-9a-fA-F]{16,})>/gi
+
+/**
+ * 这段文本是不是 QQBot 的 markdown。
+ */
+const MD_LINK_RE = /!?\[[^\]\n]*\]\s*\(\s*(?:https?|mqqapi):\/\//
+
+/**
+ * markdown 正文落在哪个字段上各家不一样，逐个试：
+ * - `content`：QQBot 适配器发出去后落库的那份（见 QQBot-Plugin/adapter/build.js，
+ *   `{type:'markdown', content}`）
+ * - `data` / `data.content`：`segment.markdown(...)` 
+ * - `markdown.content`：官方 SDK 的原生模板形态
+ */
+function markdownText(msg) {
+  for (const one of [msg.content, msg.data, msg.data?.content, msg.markdown?.content]) {
+    if (typeof one === 'string' && one) return one
+  }
+  return ''
+}
+
+/**
+ * markdown 段的正文清洗。
+ *
+ * - `\r` 归一成 `\n`：QQBot 的 markdown 用 `\r` 当行分隔符（QQBot-Plugin 的 makeMarkdownText_
+ *   就是 `text.replace(/\n/g, "\r")`）。marked 内部也会做这一步，但这里先存成规范形式，
+ *   原始数据页、以及后续按 `\n` 切行的代码就不用各自再处理一遍。
+ * - 去掉 `<faceType=…>` / `<attachmentType=…>`：QQ 自己富文本的内联标签，正文里没有对应
+ *   展示，留着会原样显示成一串尖括号。
+ *   适配器那边 `attachmentType` 会换成内联媒体，这里拿不到附件上下文，只能一并删掉。
+ */
+function cleanMarkdown(text) {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(QQ_INLINE_TAG_RE, '')
+    // @全体成员：`<@$ALL$>` 会被 marked 当成 HTML 标签整个吃掉，先换成能显示的文本
+    .replace(QQ_TEXT_AT_RE, (whole, openid) => (openid ? whole : '@全体成员'))
+}
+
+/**
+ * 文本段拆成段数组。
+ */
+function pushText(text, out, ctx) {
+  const cleaned = String(text).replace(QQ_INLINE_TAG_RE, '')
+  if (!cleaned) return
+  if (ctx.botMarkdown || MD_LINK_RE.test(cleaned)) {
+    out.push({type: 'markdown', content: cleanMarkdown(cleaned)})
+    return
+  }
+
+  let last = 0
+  for (const m of cleaned.matchAll(QQ_TEXT_AT_RE)) {
+    if (m.index > last) out.push({type: 'text', text: cleaned.slice(last, m.index)})
+    const openid = m[1]
+    out.push(openid
+      ? {type: 'at', qq: ctx.selfId ? `${ctx.selfId}${ctx.sep}${openid}` : openid, name: ''}
+      : {type: 'at', qq: 'all', name: '全体成员'})
+    last = m.index + m[0].length
+  }
+  if (last < cleaned.length) out.push({type: 'text', text: cleaned.slice(last)})
+}
+
+/**
+ * markdown 段。
+ *
+ * 原生模板（模板 id + params）的正文在 QQ 服务端，本地还原不出来，标一个 `template`
+ * 让前端说清楚，别只摊一坨原始 JSON。
  */
 function markdownSeg(msg, ctx) {
-  const data = msg.data
-  const content = typeof data === 'string' ? data : data?.content
   const seg = {type: 'markdown'}
-  if (typeof content === 'string' && content) seg.content = content
-  else seg.raw = dump(msg)
+  const content = markdownText(msg)
+  if (content) {
+    seg.content = cleanMarkdown(content)
+  } else {
+    seg.template = true
+    seg.raw = dump(msg)
+  }
   if (!ctx.rich) seg.ignored = true
   return seg
 }
 
 /**
- * 按钮段。`segment.button(...行)` 的 data 就是参数列表，每个参数是一行、
- * 行内是按钮数组（lib/modules/oicq/index.js），但也有插件直接传单个按钮对象，
- * 这里一律拍成二维。认不出结构时保留原始 JSON，别让按钮悄悄消失。
+ * 按钮段。两种来源，形状不一样：
+ *
+ * - 插件直接发的：`segment.button(...行)`（lib/modules/oicq/index.js）把参数列表放进 `data`，
+ * - QQBot 适配器发出去后落库的那份：`makeButtons` 每段就是一行，数组挂在 `buttons` 上，
+ *   元素是 QQ 官方结构（`render_data.label` + `action.type/data`）。
+ *
+ * 认不出结构时保留原始 JSON，别让按钮悄悄消失。
  */
 function buttonSeg(msg, ctx) {
   const rows = []
-  for (const row of Array.isArray(msg.data) ? msg.data : [msg.data]) {
-    if (!row) continue
-    const btns = []
-    for (const item of Array.isArray(row) ? row : [row]) {
-      const btn = button(item)
-      if (btn) btns.push(btn)
-    }
+  // 落库形态：`buttons` 本身就是一整行，不能再当「行的数组」拆一遍，否则一行按钮会竖着排
+  if (!msg.data && Array.isArray(msg.buttons)) {
+    const btns = msg.buttons.map(button).filter(Boolean)
     if (btns.length) rows.push(btns)
+  } else {
+    for (const row of Array.isArray(msg.data) ? msg.data : [msg.data]) {
+      if (!row) continue
+      const btns = []
+      for (const item of Array.isArray(row) ? row : [row]) {
+        const btn = button(item)
+        if (btn) btns.push(btn)
+      }
+      if (btns.length) rows.push(btns)
+    }
   }
   const seg = {type: 'button', rows}
   if (!rows.length) seg.raw = dump(msg)
@@ -235,20 +337,36 @@ function buttonSeg(msg, ctx) {
 }
 
 /**
- * 单个按钮。字段各家写法不一，常见的都认一遍：
- * callback 点击即以该文本触发指令，input 只填进输入框等用户补参数，link 是外链。
+ * 单个按钮。字段各家写法不一，常见的都认一遍。
+ *
+ * QQ 官方结构把动作全挂在 `action` 上，`type` 决定点下去干什么：0 外链、1 直接发出去
+ * （callback）、2 填进输入框等用户补参数 —— 只看 `action.data` 是分不出来的，会把
+ * 「填输入框」的按钮当成「点了就发」，所以按 type 分派。其余实现把三个动作平铺在段上。
  */
 function button(item) {
   if (!item || typeof item !== 'object') return null
   const btn = {text: String(item.text ?? item.label ?? item.render_data?.label ?? '')}
-  // 官方 QQBot 的原始结构把动作塞在 action.data 里，是链接还是指令看内容判断
-  const act = item.action?.data
-  const callback = item.callback ?? item.data ?? (isHttp(act) ? null : act)
-  const link = item.link ?? item.url ?? (isHttp(act) ? act : null)
-  if (callback != null && typeof callback !== 'object') btn.callback = String(callback)
-  if (item.input != null) btn.input = String(item.input)
-  if (link != null) btn.link = String(link)
-  if (item.permission ?? item.action?.permission) btn.limited = true
+  const action = item.action && typeof item.action === 'object' ? item.action : null
+
+  if (action) {
+    const data = action.data == null ? '' : String(action.data)
+    const type = Number(action.type)
+    if (type === 0) btn.link = data
+    else if (type === 2) btn.input = data
+    else btn.callback = data
+    // permission.type：1 仅管理员；0/2 是所有人或指定用户，后者有名单才算受限
+    const perm = action.permission
+    if (perm?.type === 1 || perm?.specify_user_ids?.length) btn.limited = true
+  } else {
+    // 平铺形态：动作值可能在 callback / input / link 上，也可能塞在 data 里
+    const act = item.data
+    const callback = item.callback ?? (isHttp(act) ? null : act)
+    const link = item.link ?? item.url ?? (isHttp(act) ? act : null)
+    if (callback != null && typeof callback !== 'object') btn.callback = String(callback)
+    if (item.input != null) btn.input = String(item.input)
+    if (link != null) btn.link = String(link)
+    if (item.permission) btn.limited = true
+  }
   return btn.text || btn.callback || btn.input || btn.link ? btn : null
 }
 

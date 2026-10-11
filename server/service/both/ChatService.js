@@ -7,6 +7,16 @@ import {groupAvatarUrl, userAvatarUrl} from './model/avatar.js'
 import {listBots, ensureContacts} from './model/bots.js'
 import {packetSupport} from './model/packetSupport.js'
 import {describeSendError} from './model/sendError.js'
+import {
+  decodeCursor as decodeRedisCursor,
+  encodeCursor as encodeRedisCursor,
+  getRedisClient,
+  isQQBot,
+  noticeText,
+  pureId as pureOpenid,
+  qqRedisKeys,
+  readPage as readRedisPage,
+} from './model/qqRedisStore.js'
 
 /**
  * 实时缓冲最多留多少条。
@@ -25,6 +35,18 @@ const MAX_TAIL = 200
 const MAX_SEND_IMAGES = 5
 /** 单张图片的大小上限 */
 const MAX_SEND_IMAGE_SIZE = 20 * 1024 * 1024
+/**
+ * 富媒体单个文件的上限。
+ */
+const MAX_SEND_MEDIA_SIZE = 60 * 1024 * 1024
+/**
+ * 富媒体按扩展名判类型。
+ */
+const MEDIA_EXT = {
+  video: new Set(['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ts', 'mpeg', 'mpg']),
+  record: new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a', 'opus', 'ape', 'aiff', 'amr', 'silk']),
+  image: new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tiff', 'tif']),
+}
 /** 一条消息最多 @ 几个人 */
 const MAX_SEND_ATS = 10
 /** Raw JSON 的长度上限 */
@@ -54,6 +76,13 @@ const PB_RAW_KEYS = ['pb', 'pb_raw', 'pbRaw', 'protobuf', 'raw_pb', 'msg_pb']
  * 匿名之类的杂项，不是消息内容。
  */
 const PB_ELEM_PATH = ['3', '6', '3', '1', '2']
+/**
+ * QQBot markdown 正文里的 @ 人写法：`<@openid>`（QQBot-Plugin 拼正文时把 at 段拍成这个）。
+ *
+ * 网页上认不了这种标签，只会原样露出 32 位十六进制。成员表里有名字就换成 `@昵称`，
+ * 跟消息里普通 at 段一个待遇。
+ */
+const MD_MENTION_RE = /<@!?([0-9a-fA-F]{16,})>/g
 const PB_ELEM_DROP = ['37', '9', '16']
 /** Packet-plugin 的 helper，protobuf 编解码和 send_packet 都靠它 */
 const PACKET_HELPER = '../../../../Packet-plugin/model/PacketHelper.js'
@@ -96,6 +125,18 @@ const PREVIEW_LEN = 40
 const LISTENER_KEY = Symbol.for('guoba.chatService.listener')
 
 /** 非文本段在会话列表摘要里的占位 */
+/**
+ * markdown 段在会话列表里的摘要。
+ */
+function mdPreview(content) {
+  return String(content ?? '')
+    // 图片：alt 里带 `#宽px #高px` 的那种是 QQ 自动加的，认不出内容，统一写「图片」
+    .replace(/!\[([^\]\n]*)\]\([^)]*\)/g, (whole, alt) => (alt && !alt.includes('#') ? alt : '[图片]'))
+    .replace(/\[([^\]\n]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[>\s]+/gm, '')
+    .replace(/[`*_~]+/g, '')
+}
+
 const PREVIEW_TEXT = {
   image: '[图片]',
   record: '[语音]',
@@ -107,6 +148,20 @@ const PREVIEW_TEXT = {
   markdown: '[Markdown]',
   button: '',
   reply: '',
+}
+
+/**
+ * 富媒体文件该用哪个段类型。
+ * @param file multer 给的文件对象（有 originalname / mimetype）
+ */
+function mediaSegType(file) {
+  const mime = String(file?.mimetype ?? '').toLowerCase()
+  const name = String(file?.originalname ?? '').toLowerCase()
+  const ext = name.includes('.') ? name.split('.').pop() : ''
+  if (mime.startsWith('image/') || MEDIA_EXT.image.has(ext)) return 'image'
+  if (mime.startsWith('video/') || MEDIA_EXT.video.has(ext)) return 'video'
+  if (mime.startsWith('audio/') || MEDIA_EXT.record.has(ext)) return 'record'
+  return 'file'
 }
 
 /**
@@ -149,7 +204,9 @@ function isPrivateIp(ip) {
  * 1. **实时追新**：挂一个 `Bot.on('message')`，把收到的消息规范化后进环形缓冲，
  *    前端拿游标轮询增量（同 LogService 的范式，不用长连接）。
  * 2. **拉历史**：OneBot v11 的 pick 结果上有 `getChatHistory`，取的是 QQ 服务端记录，
- *    含 bot 自己发的，比自建存储可靠。适配器没这方法就只能看面板运行期间的消息。
+ *    含 bot 自己发的，比自建存储可靠。QQ 官方机器人（QQBot 适配器）没这个方法，
+ *    改从 QQBot-Plugin 落进 Redis 的那份记录里读（见
+ *    model/qqRedisStore.js）。两者都没有就只能看面板运行期间的消息。
  *
  * 缓冲只在内存里，重启即丢；要长期留存请用 QQ 客户端。
  */
@@ -278,7 +335,16 @@ export default class ChatService extends Service {
       : String((self ? (e.target_id ?? e.peer_id) : null) ?? e.user_id ?? '')
     if (!botId || !id) return
 
-    const segments = await normalizeMsg(e.message, {download: false})
+    /**
+     * QQBot 的段里有三样 OneBot 系没有的东西，交给解析层处理（见 #msgOpts）：
+     * 裸 openid 的 @、客户端表情的内联标记、以及**机器人发来的 markdown**。
+     *
+     * 别的机器人（`author.bot`）的正文一律按 markdown 走。自己发的那条不算：走 legacy 档时正文就是纯文本，
+     * 当 markdown 解析会把 `#`、`>`、`*` 这些字符按语法吃掉。
+     */
+    const segments = await normalizeMsg(e.message, this.#msgOpts(botId, {
+      botMarkdown: !self && e.raw_event?.d?.author?.bot === true,
+    }))
     // sender 先过一遍 —— 他会进 #names，下面补 @ 名字时就能用上
     const sender = this.#sender(e.sender, e.user_id, botId)
     // 补全 @ 段的昵称。放在 #push 之前，进缓冲的就是补齐过的段
@@ -290,6 +356,7 @@ export default class ChatService extends Service {
       type,
       id,
       messageId,
+      eventId: String(e.event_id ?? ''),
       messageSeq: this.#seqOf(e),
       time: Number(e.time) || Math.floor(Date.now() / 1000),
       self,
@@ -609,6 +676,22 @@ export default class ChatService extends Service {
     return seq != null && seq !== '' ? String(seq) : ''
   }
 
+  /**
+   * normalizeMsg 的适配器开关。
+   * @param botMarkdown 这段正文要不要直接当 markdown 渲染，见 {@link ChatService}
+   */
+  #msgOpts(botId, {botMarkdown = false} = {}) {
+    const bot = this.#bot(botId)
+    const qqbot = isQQBot(bot)
+    return {
+      download: false,
+      botMarkdown,
+      selfId: qqbot ? String(botId ?? '') : '',
+      sep: bot?.adapter?.sep || ':',
+      dropFace: qqbot,
+    }
+  }
+
   #sender(sender, userId, botId) {
     const uin = String(sender?.user_id ?? userId ?? '')
     const card = String(sender?.card ?? '')
@@ -624,6 +707,8 @@ export default class ChatService extends Service {
       role: String(sender?.role ?? ''),
       /** 群头衔，页面上跟在昵称后面显示一个小标签 */
       title: String(sender?.title ?? ''),
+      openid: String(sender?.openid ?? ''),
+      unionid: String(sender?.unionid ?? ''),
       /** QQBot 这类适配器事件里直接带头像地址，没带的按 id 算（见 model/avatar.js） */
       avatar: userAvatarUrl(uin, botId, sender?.avatar),
     }
@@ -682,6 +767,7 @@ export default class ChatService extends Service {
     for (const seg of msg.segments ?? []) {
       if (seg.type === 'text') text += seg.text ?? ''
       else if (seg.type === 'at') text += `@${seg.name || seg.qq}`
+      else if (seg.type === 'markdown') text += mdPreview(seg.content) || PREVIEW_TEXT.markdown
       else text += PREVIEW_TEXT[seg.type] ?? `[${seg.type}]`
       if (text.length > PREVIEW_LEN) break
     }
@@ -700,10 +786,32 @@ export default class ChatService extends Service {
     /**
      * 只有群消息才可能有要找的名字 —— 私聊没有成员列表这回事。
      * 白名单那件事不跟它一起早退：一张图也不 @ 的消息（绝大多数）照样要登记 url。
+     *
+     * markdown 正文里的 `<@openid>` 也算要名字的：QQBot 的机器人消息是 markdown，
+     * 里面 @ 人就是这种写法，不认它的话正文里会直接露出 32 位十六进制。
      */
-    const wantNames = !!groupId && segments?.some?.((s) => s?.type === 'at')
+    const hasMdMention = (s) => s?.type === 'markdown' && typeof s.content === 'string' && s.content.includes('<@')
+    const wantNames = !!groupId && segments?.some?.((s) => s?.type === 'at' || hasMdMention(s))
     if (!wantNames && !remember) return
     const cold = []
+    /** at 段 / markdown 正文里的 openid 都按 `${selfId}:${openid}` 这个完整形式进缓存 */
+    const bot = this.#bot(botId)
+    const sep = bot?.adapter?.sep || ':'
+    const qqbot = isQQBot(bot)
+    /** 机器人自己被 @ 时段的 `qq` 就是账号本身，成员表里没这一号 */
+    const selfUin = String(botId ?? '')
+    /**
+     * 名字分两级取：
+     * 1. 群名片表（`群号:成员id`）—— 群里发过言的、以及从成员列表拉回来的
+     * 2. 全局昵称表 —— 谁发过言就记谁
+     *
+     * 第 2 级只给 QQBot 兜底。
+     */
+    const nameOf = (uin) => {
+      const hit = groupId ? this.#memberNames.get(`${groupId}:${uin}`) : ''
+      if (hit) return hit
+      return qqbot ? (this.#names.get(String(uin)) || '') : ''
+    }
 
     const walk = (list) => {
       for (const seg of list ?? []) {
@@ -717,17 +825,25 @@ export default class ChatService extends Service {
         }
         if (seg?.type === 'at' && seg.qq) {
           const uin = String(seg.qq)
-          /**
-           * 全局那份按 QQ 记名字，是给「同一个人在别处发过言」兜底的。
-           *
-           * 只在缓存里没有时才补：群名片跨群会串（同一个人在 A 群叫「张三」、B 群叫
-           * 「隔壁老王」），而这里的名字会跟着消息一起留在缓冲里，串了就一直是错的。
-           */
-          if (!seg.name) {
-            const name = groupId ? this.#memberNames.get(`${groupId}:${uin}`) : ''
-            if (name) seg.name = name
-            else if (groupId) cold.push(uin)
+          if (!seg.name && uin !== 'all') {
+            if (uin === selfUin) {
+              seg.name = String(bot?.nickname ?? '') || '机器人'
+            } else {
+              const name = nameOf(uin)
+              if (name) seg.name = name
+              else if (groupId) cold.push(uin)
+            }
           }
+        }
+        if (hasMdMention(seg)) {
+          // 缓存里还没有就先原样留着，名字取回来后再走一趟（调用方本来就跑两趟）
+          seg.content = seg.content.replace(MD_MENTION_RE, (whole, openid) => {
+            const uin = `${botId}${sep}${openid}`
+            const name = nameOf(uin)
+            if (name) return `@${name}`
+            if (groupId) cold.push(uin)
+            return whole
+          })
         }
         if (Array.isArray(seg?.nodes)) {
           for (const node of seg.nodes) walk(node.segments)
@@ -810,7 +926,9 @@ export default class ChatService extends Service {
       if (typeof group?.pickMember !== 'function') continue
       try {
         const member = group.pickMember(uin)
-        const info = typeof member?.getInfo === 'function' ? await member.getInfo() : member?.info
+        const info = typeof member?.getInfo === 'function' ? await member.getInfo()
+          : typeof member?.getGroupMemberInfo === 'function' ? await member.getGroupMemberInfo()
+            : member?.info
         const name = String(info?.card || info?.nickname || info?.name || '').trim()
         if (name) this.#memberNames.set(key, name)
         else this.#markMissed(key)
@@ -944,6 +1062,10 @@ export default class ChatService extends Service {
   /**
    * 拉历史消息。
    *
+   * 两条路：OneBot 系走适配器的 `getChatHistory`（QQ 服务端记录），QQBot 系走 Redis
+   * （QQBot-Plugin 落的那份）。都没有就如实返回 `supported: false`，前端会退而显示
+   * 面板运行期间收到的消息。
+   *
    * @param seq   翻页游标，传本地最早一条的 messageSeq；0 或空取最新
    * @param count 条数
    */
@@ -951,8 +1073,18 @@ export default class ChatService extends Service {
     const target = this.#pick(type, id, botId)
     const cursor = this.#seq - 1
     if (typeof target?.getChatHistory !== 'function') {
-      // 非 OneBot 适配器多半没有这能力，前端据此提示「只能看面板运行期间的消息」
-      return {supported: false, messages: [], hasMore: false, cursor}
+      const viaRedis = await this.#historyViaRedis({botId, type, id, seq, count})
+      if (viaRedis) return {...viaRedis, cursor}
+      /**
+       * 非 OneBot 适配器多半没有这能力，前端据此提示「只能看面板运行期间的消息」。
+       * QQBot 另说一句 —— 它有落库的那份记录，读不到多半是存储后端或保存期限的问题，
+       * 泛泛地讲「适配器不支持」会把人带到错的方向上。
+       */
+      const note = isQQBot(this.#bot(botId))
+        ? '这是 QQ 官方机器人，历史消息由 QQBot-Plugin (风佬) 提供，当前没读到记录。'
+        + '请确认消息存储设置消息记录开关已开启且存储后端是redis，'
+        : ''
+      return {supported: false, messages: [], hasMore: false, cursor, note}
     }
 
     const num = Math.min(Math.max(Number(count) || HISTORY_COUNT, 1), MAX_HISTORY_COUNT)
@@ -1012,7 +1144,7 @@ export default class ChatService extends Service {
         time: Number(item.time) || 0,
         self: userId === String(botId ?? ''),
         sender: this.#sender(item.sender, userId, botId),
-        segments: await normalizeMsg(item.message ?? item.content, {download: false}),
+        segments: await normalizeMsg(item.message ?? item.content, this.#msgOpts(botId)),
       })
       // 历史接口没有上报原文，只能拿返回的条目本身；已经有实时那份的不覆盖
       if (messageId) {
@@ -1036,6 +1168,115 @@ export default class ChatService extends Service {
       // 顺带把基线游标给前端，省一次请求；从这里开始轮询增量
       cursor,
     }
+  }
+
+  /* ---------------- QQBot：从 Redis 读历史 ---------------- */
+
+  /**
+   * 从 Redis 里读 QQBot 的历史消息。
+   *
+   * 存储后端设成 redis 时，QQBot-Plugin 会把每条消息写进
+   * `wind-msg:*` / `wind-bot-msg:*` 两个 ZSET（键名见 model/qqRedisStore.js）。这里
+   * 把它们取出来、按面板的结构还原，好让消息记录页跟 OneBot 系一样能往上翻历史。
+   *
+   * @return {Promise<{supported: true, messages: object[], hasMore: boolean}|null>}
+   *   null 表示没有可用数据（不是 QQBot、Redis 没接上、或这个会话压根没有记录），
+   *   由调用方回退到「只能看面板运行期间的消息」。
+   */
+  async #historyViaRedis({botId, type, id, seq, count}) {
+    const client = getRedisClient()
+    if (!client) return null
+    // 只对 QQBot 会话走这条路：别的适配器没有这套键，白查一遍还容易误读
+    if (!isQQBot(this.#bot(botId))) return null
+    const keys = qqRedisKeys(type, id)
+    if (!keys.length) return null
+
+    const want = Math.min(Math.max(Number(count) || HISTORY_COUNT, 1), MAX_HISTORY_COUNT)
+    const cursor = decodeRedisCursor(seq)
+    const {items, hasMore} = await readRedisPage(client, keys, cursor, want)
+    // 首屏（没有游标）就一条都没读到 —— 这个会话确实没有记录，交给上层回退
+    if (!items.length && !cursor) return null
+
+    const key = `${botId}:${type === 'group' ? 'group' : 'friend'}:${id}`
+    const messages = []
+    for (const {item, ts, ordinal} of items) {
+      messages.push(await this.#fromRedisItem(item, {
+        botId, type, id, key,
+        // 翻页游标就是这条的「时间戳 + 同秒序号」，前端原样回传
+        messageSeq: encodeRedisCursor(ts, ordinal),
+      }))
+    }
+    // readPage 给的是「新 → 旧」，页面要「旧 → 新」
+    messages.reverse()
+    /**
+     * 补 @ 段昵称，顺手把段里的直链记进代理白名单（rkey 过期时要靠它代拉）。
+     *
+     * `#resolveNames` 是两段式的：缓存里有就直接填，没有就先去适配器要一次成员列表 ——
+     * 也就是说**冷启动那一趟填不上名字，得再走一遍**。实时那条路上 `#onMessage` 与
+     * `#push` 会各跑一次，正好把这两段覆盖掉；这里只有一次机会，所以自己补一趟。
+     */
+    for (const msg of messages) await this.#resolveNames(msg.segments, {botId, type, id})
+    for (const msg of messages) await this.#resolveNames(msg.segments, {botId, type, id})
+
+    return {supported: true, messages, hasMore}
+  }
+
+  /**
+   * 把 Redis 里存的那条 QQBot 记录转成面板的消息结构。
+   *
+   * 字段与 QQBot-Plugin/lib/message.js 写入时一一对应；段数组的形态跟 OneBot 那套一样
+   * （`{type, ...}` 平铺），所以直接交给 normalizeMsg 就行。
+   */
+  async #fromRedisItem(item, {botId, type, id, key, messageSeq}) {
+    const userId = String(item.user_id ?? '')
+    const messageId = item.message_id != null && item.message_id !== '' ? String(item.message_id) : ''
+    const rawSender = item.sender && typeof item.sender === 'object' ? item.sender : {}
+    /**
+     * 群通知（入群 / 退群 / 机器人被拉入踢出）跟普通消息同存一个 ZSET，只有 is_notice
+     * 标记不同。面板没有「通知」这种段，压成一行系统文案当文本发出去。
+     */
+    const segments = item.is_notice
+      ? [{type: 'text', text: noticeText(item)}]
+      : await normalizeMsg(item.message ?? item.content, this.#msgOpts(botId, {
+        botMarkdown: item.is_bot === true && item.me !== true,
+      }))
+
+    const message = {
+      key,
+      botId: String(botId ?? ''),
+      type: type === 'group' ? 'group' : 'friend',
+      id: String(id ?? ''),
+      messageId,
+      eventId: String(item.event_id ?? ''),
+      messageSeq,
+      time: Number(item.timestamp) || 0,
+      /**
+       * 是不是机器人自己发的。
+       *
+       * 不能拿 `userId === botId` 判 —— QQBot 的 user_id 是 `${selfId}:${openid}` 这种
+       * 复合形式，永远等于不了 botId。写入侧对机器人自己的消息打了 `me` 标记，认它。
+       */
+      self: item.me === true,
+      recalled: !!item.recalled,
+      // 昵称 / 头像写入侧单独存了一份，sender 里那份可能缺，这里合并着取
+      sender: this.#sender({
+        ...rawSender,
+        user_id: userId || rawSender.user_id,
+        nickname: item.nickname || rawSender.nickname,
+        avatar: item.avatar || rawSender.avatar,
+      }, userId, botId),
+      segments,
+    }
+    // Redis 里这条就是最原始的一份，留给「查看原始消息」的 msg raw 档
+    if (messageId) {
+      this.#storeRaw(messageId, {
+        array: this.#dump(item.message),
+        raw: this.#dump(item),
+        pbElem: '',
+        pbRaw: '',
+      }, {overwrite: false})
+    }
+    return message
   }
 
   /** 看合并转发的内容。段里只有一个 id，内容在 QQ 服务端 */
@@ -1065,7 +1306,7 @@ export default class ChatService extends Service {
         nickname: String(item.sender?.nickname ?? item.nickname ?? ''),
         userId: String(item.sender?.user_id ?? item.user_id ?? ''),
         time: Number(item.time) || null,
-        segments: await normalizeMsg(content, {download: false}),
+        segments: await normalizeMsg(content, this.#msgOpts(botId)),
       })
     }
     for (const node of nodes) await this.#resolveNames(node.segments, {botId, type, id})
@@ -1128,13 +1369,58 @@ export default class ChatService extends Service {
    *
    * @param text    文本
    * @param images  图片，元素为 dataURL 或 base64（小图兼容用，大图走 files）
-   * @param files   multipart 上传上来的图片，元素为 `{buffer}` 或 `{path}`
+   * @param files   multipart 上传上来的文件，元素为 `{buffer}` 或 `{path}`
    * @param ats     要 @ 的 QQ 号，拼在最前面
-   * @param replyTo 引用哪条消息的 message_id
+   * @param replyTo 引用哪条消息的 message_id（QQ 上显示成一条引用）
+   * @param replyMsgId   被动回复用的 msg_id，见下方 source
+   * @param replyEventId 被动回复用的 event_id，见下方 source
+   * @param kind    消息类型：legacy（普通，默认）/ markdown / ark / media（富媒体）。
+   *                后三种只有 QQ 官方机器人（QQBot-Plugin）认得，面板只在 QQBot 会话下给。
+   * @param ark     kind=ark 时的参数，JSON 字符串 `{template_id, kv}`
    */
-  async send({botId, type, id, text = '', images = [], files = [], ats = [], replyTo = ''} = {}) {
+  async send({
+    botId, type, id, text = '', images = [], files = [], ats = [],
+    replyTo = '', replyMsgId = '', replyEventId = '', kind = 'legacy', ark = '',
+  } = {}) {
     const msg = []
     if (replyTo) msg.push({type: 'reply', id: String(replyTo)})
+    /**
+     * 被动回复。
+     */
+    const source = replyMsgId || replyEventId
+      ? {
+        ...(replyMsgId ? {id: String(replyMsgId)} : {}),
+        ...(replyEventId ? {event_id: String(replyEventId)} : {}),
+      }
+      : null
+
+    /* ---- QQBot 的三种专属类型：段结构跟普通档差得远，单独走 ---- */
+
+    if (kind === 'markdown') {
+      const md = typeof text === 'string' ? text.trim() : ''
+      if (!md) throw new GuobaError('Markdown 内容不能为空')
+      msg.push({type: 'markdown', data: md})
+      return this.#sendMsg({botId, type, id, msg, source})
+    }
+
+    if (kind === 'ark') {
+      msg.push(this.#buildArkSeg(ark))
+      return this.#sendMsg({botId, type, id, msg, source})
+    }
+
+    if (kind === 'media') {
+      const uploads = this.#toArray(files)
+      if (!uploads.length) throw new GuobaError('富媒体要选一个文件')
+      for (const file of uploads.slice(0, MAX_SEND_IMAGES)) {
+        const buffer = await this.#readUpload(file, MAX_SEND_MEDIA_SIZE)
+        if (buffer?.length) msg.push({type: mediaSegType(file), file: buffer})
+      }
+      if (!msg.some((i) => i.type !== 'reply')) throw new GuobaError('没有读到可发送的文件')
+      return this.#sendMsg({botId, type, id, msg, source})
+    }
+
+    /* ---- 普通档 ---- */
+
     for (const item of this.#toArray(this.#parseAts(ats)).slice(0, MAX_SEND_ATS)) {
       // ats 可能是字符串/数字，也可能带 name 的对象（前端 @ 时一起传的）
       const uin = String(item && typeof item === 'object' ? item.qq : item ?? '').trim()
@@ -1167,7 +1453,7 @@ export default class ChatService extends Service {
     if (!msg.some((i) => i.type !== 'reply')) {
       throw new GuobaError('消息内容不能为空')
     }
-    return this.#sendMsg({botId, type, id, msg})
+    return this.#sendMsg({botId, type, id, msg, source})
   }
 
   #toArray(v) {
@@ -1192,19 +1478,45 @@ export default class ChatService extends Service {
   }
 
   /**
+   * Ark 卡片段。
+   */
+  #buildArkSeg(ark) {
+    let parsed
+    try {
+      parsed = typeof ark === 'string' ? JSON.parse(ark) : ark
+    } catch (err) {
+      throw new GuobaError(`Ark 参数不是合法 JSON：${err?.message ?? err}`)
+    }
+    const templateId = Number(parsed?.template_id)
+    if (!Number.isFinite(templateId) || templateId <= 0) {
+      throw new GuobaError('Ark 模板不能为空')
+    }
+    const kv = this.#toArray(parsed?.kv)
+      .map((i) => ({key: String(i?.key ?? '').trim(), value: String(i?.value ?? '').trim()}))
+      .filter((i) => i.key && i.value)
+    if (!kv.length) {
+      throw new GuobaError('Ark 至少要填一个字段')
+    }
+    return {type: 'ark', template_id: templateId, kv}
+  }
+
+  /**
    * 取上传文件的字节。
    *
-   * 锅巴全局挂的 multer 是落盘的（`data/upload_tmp/`），读完就删 —— 图片已经进
+   * 锅巴全局挂的 multer 是落盘的（`data/upload_tmp/`），读完就删 —— 文件已经进
    * 消息段了，临时文件留着只是占地方。
+   *
+   * @param maxSize 这个文件的大小上限，默认按图片算
    */
-  async #readUpload(file) {
+  async #readUpload(file, maxSize = MAX_SEND_IMAGE_SIZE) {
     if (Buffer.isBuffer(file?.buffer)) return file.buffer
     const src = file?.path
     if (!src) return null
     try {
       const buffer = await fs.readFile(src)
-      if (buffer.length > MAX_SEND_IMAGE_SIZE) {
-        throw new GuobaError(`图片过大（单张上限 ${MAX_SEND_IMAGE_SIZE / 1024 / 1024}MB）`)
+      if (buffer.length > maxSize) {
+        const mb = Math.round(maxSize / 1024 / 1024)
+        throw new GuobaError(`文件过大（单个上限 ${mb}MB）`)
       }
       return buffer
     } finally {
@@ -1279,21 +1591,45 @@ export default class ChatService extends Service {
   }
 
   /** 真正发出去，并把自己这条塞进缓冲好让页面上看到 */
-  async #sendMsg({botId, type, id, msg}) {
-    const target = this.#pick(type, id, botId)
-    if (typeof target?.sendMsg !== 'function') {
-      throw new GuobaError(`未找到可用的发送对象：${id}`)
-    }
+  async #sendMsg({botId, type, id, msg, source = null}) {
     let res
-    try {
-      res = await target.sendMsg(msg)
-    } catch (err) {
-      // 适配器原文是给开发者看的（整条 URL + 错误码），翻成人话再抛给面板
-      logger.error(`[Guoba] 面板发送消息失败：${err?.message ?? err}`)
-      throw new GuobaError(describeSendError(err))
+    /**
+     * QQBot 一律自己拼 data 直发，不走 `pickGroup().sendMsg`。
+     */
+    if (isQQBot(this.#bot(botId))) {
+      res = await this.#sendWithSource({botId, type, id, msg, source})
+    } else {
+      const target = this.#pick(type, id, botId)
+      if (typeof target?.sendMsg !== 'function') {
+        throw new GuobaError(`未找到可用的发送对象：${id}`)
+      }
+      try {
+        res = await target.sendMsg(msg)
+      } catch (err) {
+        // 适配器原文是给开发者看的（整条 URL + 错误码），翻成人话再抛给面板
+        logger.error(`[Guoba] 面板发送消息失败：${err?.message ?? err}`)
+        throw new GuobaError(describeSendError(err))
+      }
     }
 
-    const messageId = res?.message_id != null ? String(res.message_id) : ''
+    /**
+     * QQBot-Plugin 的 `sendMsg` **从不抛错**：它把每条的失败收在 `rets.error` 里，
+     * 最后返回 `{message_id: [], data: [], error: [...]}`（见它的 adapter/send.js）。
+     * 不认这个形状的话，面板会把失败当成功 —— 消息根本没出去，界面却本地补了一条回显，
+     * 用户看不出任何异常。这里把这种返回翻成异常。
+     */
+    const botErrors = Array.isArray(res?.error) ? res.error.filter(Boolean) : []
+    if (botErrors.length) {
+      const detail = botErrors.map((e) => e?.message ?? e).join(' | ')
+      logger.error(`[Guoba] 面板发送消息失败：${detail}`)
+      // 多段消息可能只挂了一部分，说清楚免得用户以为全没发出去
+      const partial = Array.isArray(res.message_id) && res.message_id.length ? '（部分消息已发出）' : ''
+      throw new GuobaError(describeSendError(botErrors[0]) + partial)
+    }
+
+    // QQBot 的 message_id 是数组（一次发多段），OneBot 是单值，两种都要认
+    const rawId = Array.isArray(res?.message_id) ? res.message_id[0] : res?.message_id
+    const messageId = rawId != null && rawId !== '' ? String(rawId) : ''
     const self = String(botId ?? '')
     const bot = Bot.bots?.[self]
     /**
@@ -1321,6 +1657,42 @@ export default class ChatService extends Service {
     }, {remember: false})
 
     return {messageId, message: pushed, cursor: this.#seq - 1}
+  }
+
+  /**
+   * 直接调 QQBot 适配器发送（普通发送与被动回复共用这一条）。
+   */
+  async #sendWithSource({botId, type, id, msg, source = null}) {
+    const bot = this.#bot(botId)
+    if (!isQQBot(bot)) {
+      throw new GuobaError('当前适配器不支持被动回复（msg_id / event_id 回复是 QQ 官方机器人专有）')
+    }
+    const group = type === 'group'
+    const send = group ? bot.adapter?.sendGroupMsg : bot.adapter?.sendFriendMsg
+    if (typeof send !== 'function') {
+      throw new GuobaError('当前适配器不支持被动回复')
+    }
+    const data = {
+      self_id: String(botId ?? ''),
+      bot,
+      [group ? 'group_id' : 'user_id']: pureOpenid(id),
+      platform: group ? 'QQ-group' : 'QQ-private',
+      legacy: this.#isLegacyMsg(msg),
+    }
+    try {
+      return await send.call(bot.adapter, data, msg, source ?? undefined)
+    } catch (err) {
+      logger.error(`[Guoba] 面板发送消息失败：${err?.message ?? err}`)
+      throw new GuobaError(describeSendError(err))
+    }
+  }
+
+  /**
+   * 这条消息该不该按「普通文本」发（= QQBot 的 `data.legacy`）。
+   */
+  #isLegacyMsg(msg) {
+    const md = new Set(['markdown', 'ark', 'at'])
+    return !this.#toArray(msg).some((seg) => md.has(seg?.type))
   }
 
   /**
@@ -1386,6 +1758,9 @@ export default class ChatService extends Service {
       const err = item instanceof Error ? item.message : null
       const bad = err ?? (item?.retcode && item.retcode !== 0 ? (item.msg || item.wording) : null)
       if (bad) throw new GuobaError(`撤回失败：${bad}`)
+      if (item === false) {
+        throw new GuobaError('撤回失败：适配器没接受这条撤回（多半是没有权限，或超过了两分钟时限）')
+      }
     }
     const msg = this.#index.get(mid)
     if (msg) {

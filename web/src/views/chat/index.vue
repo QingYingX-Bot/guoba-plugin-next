@@ -30,6 +30,9 @@ import {
   type ChatActiveItem,
   type ChatMsg,
   type ChatRaw,
+  type ChatReplyMode,
+  type ChatReplyTarget,
+  type ChatSendPayload,
   type ChatSession,
   type ChatStatus,
   type ChatType,
@@ -127,7 +130,7 @@ const sending = ref(false)
 /** 缓冲被挤掉过一段，页面上给个重载入口 */
 const missed = ref(false)
 const errMsg = ref('')
-const replyTo = ref<{ messageId: string; name: string; text: string } | null>(null)
+const replyTo = ref<ChatReplyTarget | null>(null)
 /** 在底部时新消息自动跟随，往上翻了就只提示不跳 */
 const follow = ref(true)
 const newTip = ref(false)
@@ -172,12 +175,40 @@ function summarize(segments: MsgSeg[]) {
   for (const seg of segments) {
     if (seg.type === 'text') out += seg.text ?? ''
     else if (seg.type === 'at') out += `@${seg.name || seg.qq} `
+    else if (seg.type === 'markdown') out += mdToText(seg.content ?? '')
     else if (seg.type === 'reply') continue
     else out += SEG_TEXT[seg.type] ?? ''
     if (out.length > SUMMARY_LEN) break
   }
   out = out.replace(/\s+/g, ' ').trim()
   return out.length > SUMMARY_LEN ? `${out.slice(0, SUMMARY_LEN)}…` : out
+}
+
+/**
+ * markdown 压成一行纯文本（摘要、复制都用它）。
+ */
+function mdToText(content: string) {
+  return String(content ?? '')
+    .replace(/!\[([^\]\n]*)\]\([^)]*\)/g, (whole, alt) => (alt && !alt.includes('#') ? alt : '[图片]'))
+    .replace(/\[([^\]\n]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[>\s]+/gm, '')
+    .replace(/[`*_~]+/g, '')
+}
+
+/**
+ * 把一条消息的正文取成 markdown。
+ */
+function markdownOf(segments: MsgSeg[]) {
+  let out = ''
+  for (const seg of segments) {
+    if (seg.type === 'text') out += seg.text ?? ''
+    else if (seg.type === 'markdown') out += seg.content ?? ''
+    else if (seg.type === 'at') out += `@${seg.name || seg.qq}`
+    else if (seg.type === 'reply') continue
+    else if (seg.type === 'image') out += seg.url ? `![图片](${seg.url})` : (SEG_TEXT.image ?? '')
+    else out += SEG_TEXT[seg.type] ?? ''
+  }
+  return out.trim()
 }
 
 /* ---------------- 段渲染要用的注入 ---------------- */
@@ -227,6 +258,34 @@ function appIdOf(uin?: string) {
 }
 
 provide('chatBotAppId', appIdOf)
+
+/**
+ * 当前会话是不是 QQ 官方机器人。只有它认 MD / Ark / 富媒体那三档，
+ * 普通适配器（OneBot 系）塞过去只会被丢掉，所以输入区按它决定露哪几个档位。
+ */
+const isQQBot = computed(() => (current.value ? adapterOf(current.value.botId) === 'QQBot' : false))
+
+/**
+ * 「查看原始消息」弹窗里的档位。
+ */
+const rawTabs = computed(() => {
+  if (!isQQBot.value) return RAW_TABS
+  return [
+    {...RAW_TABS[0], title: 'rawMsg', hint: '这条消息的段数组（QQBot-Plugin 落库的那份）'},
+    {...RAW_TABS[1], title: 'rawEvent', hint: '落库的完整记录 / 上报原文'},
+  ]
+})
+
+/**
+ * 最近一条**收到**的消息 id，给 QQBot 的「msg_id 回复」用。
+ */
+function lastIncomingId() {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const msg = messages.value[i]
+    if (!msg.self && msg.messageId) return msg.messageId
+  }
+  return ''
+}
 
 /* ---------------- 会话 ---------------- */
 
@@ -429,24 +488,62 @@ watch(listEl, (el) => {
 
 /* ---------------- 发送 ---------------- */
 
-async function onSend(payload: { text: string; images: File[]; ats: { qq: string; name: string }[] }) {
+/** 输入区的档位转成后端的 kind。normal 是老的纯文本路径，其余同名 */
+function kindOf(mode: ChatSendPayload['mode']) {
+  return mode === 'normal' ? 'legacy' : mode
+}
+
+/**
+ * 引用谁。
+ */
+function replyFieldsOf(payload: ChatSendPayload) {
+  // 三种口径落到后端三个字段上，见 ChatService.send 的注释
+  if (replyTo.value?.mode === 'eventId') return {replyEventId: replyTo.value.id}
+  if (replyTo.value?.mode === 'msgId') return {replyMsgId: replyTo.value.id}
+  if (replyTo.value?.mode === 'quote') return {replyTo: replyTo.value.id}
+  if (!payload.useMsgIdReply) return {}
+  const id = lastIncomingId()
+  return id ? {replyMsgId: id} : {}
+}
+
+async function onSend(payload: ChatSendPayload) {
   const session = current.value
   if (!session) return
   sending.value = true
   try {
-    // 图片以原始 File 走 multipart：base64 塞 JSON 会撞宿主 express 的 body 上限（413）
-    const fd = new FormData()
-    fd.set('botId', session.botId)
-    fd.set('type', session.type)
-    fd.set('id', session.id)
-    fd.set('text', payload.text)
-    fd.set('replyTo', replyTo.value?.messageId ?? '')
-    // ats 把 name 也带上，不然后端拼出来的 at 段只有 qq，页面上显示不出被 @ 的人叫啥
-    if (payload.ats?.length) {
-      fd.set('ats', JSON.stringify(payload.ats.map((a) => ({ qq: a.qq, name: a.name }))))
+    let data: { messageId: string; message: ChatMsg | null; cursor: number }
+    if (payload.mode === 'raw') {
+      // 段数组整段交给适配器，走 JSON 接口（multipart 里塞 JSON 文本反而绕）
+      data = await apiChatSendRaw({
+        botId: session.botId,
+        type: session.type,
+        id: session.id,
+        raw: payload.raw,
+      })
+    } else {
+      const reply = replyFieldsOf(payload)
+      // 勾了 msg_id 回复却找不到可引用的消息，说一声：这种情况下官bot 多半会拒发
+      if (payload.useMsgIdReply && !replyTo.value && !reply.replyMsgId) {
+        message.warning('还没收到过消息，没有 msg_id 可引用，这条按主动消息发')
+      }
+      // 图片与富媒体都以原始 File 走 multipart：base64 塞 JSON 会撞宿主 express 的 body 上限（413）
+      const fd = new FormData()
+      fd.set('botId', session.botId)
+      fd.set('type', session.type)
+      fd.set('id', session.id)
+      fd.set('text', payload.text)
+      fd.set('kind', kindOf(payload.mode))
+      for (const [k, v] of Object.entries(reply)) fd.set(k, v)
+      // ark 档把表单拼好的模板参数带过去，后端直接当段塞进消息
+      if (payload.ark) fd.set('ark', payload.ark)
+      // ats 把 name 也带上，不然后端拼出来的 at 段只有 qq，页面上显示不出被 @ 的人叫啥
+      if (payload.ats?.length) {
+        fd.set('ats', JSON.stringify(payload.ats.map((a) => ({ qq: a.qq, name: a.name }))))
+      }
+      for (const file of payload.images) fd.append('files', file)
+      for (const file of payload.files) fd.append('files', file)
+      data = await apiChatSend(fd)
     }
-    for (const file of payload.images) fd.append('files', file)
-    const data = await apiChatSend(fd)
     inputRef.value?.reset()
     replyTo.value = null
     // 后端也把这条塞进了缓冲，轮询会再送一次，靠 messageId 去重
@@ -463,37 +560,32 @@ async function onSend(payload: { text: string; images: File[]; ats: { qq: string
   }
 }
 
-async function onSendRaw(raw: string) {
-  const session = current.value
-  if (!session) return
-  sending.value = true
-  try {
-    const data = await apiChatSendRaw({
-      botId: session.botId,
-      type: session.type,
-      id: session.id,
-      raw,
-    })
-    inputRef.value?.reset()
-    if (data.message) {
-      const add = dedupe([data.message])
-      messages.value.push(...add)
-    }
-    follow.value = true
-    await scrollToEnd()
-  } catch {
-    // 同上，Raw 内容不清空
-  } finally {
-    sending.value = false
-  }
-}
-
-function onReply(msg: ChatMsg) {
-  if (!msg.messageId) {
-    message.warning('这条消息没有 id，没法引用')
+/**
+ * 把某条设成回复目标。三种口径共用这一份状态，发送时按 mode 分派给后端的
+ * replyTo / replyMsgId / replyEventId（见 replyFieldsOf）。
+ */
+function setReply(msg: ChatMsg, mode: ChatReplyMode) {
+  const id = mode === 'eventId' ? msg.eventId : msg.messageId
+  if (!id) {
+    message.warning(mode === 'eventId' ? '这条消息没有 event_id，没法用它回复' : '这条消息没有 id，没法引用')
     return
   }
-  replyTo.value = { messageId: msg.messageId, name: senderName(msg), text: summarize(msg.segments) }
+  replyTo.value = { mode, id, name: senderName(msg), text: summarize(msg.segments) }
+}
+
+/** 右键「引用回复」：所有适配器都有，QQ 上显示成一条引用 */
+function onReply(msg: ChatMsg) {
+  setReply(msg, 'quote')
+}
+
+/** 右键「使用本消息 msg_id 回复」：官bot 的被动回复，只有 QQBot 有 */
+function onReplyByMsgId(msg: ChatMsg) {
+  setReply(msg, 'msgId')
+}
+
+/** 右键「使用本消息 event_id 回复」：同上，带的是 event_id */
+function onReplyByEventId(msg: ChatMsg) {
+  setReply(msg, 'eventId')
 }
 
 async function onRecall(msg: ChatMsg) {
@@ -522,10 +614,13 @@ function onAt(msg: ChatMsg) {
   inputRef.value?.addAt({ qq: msg.sender.userId, name: senderName(msg) })
 }
 
-/** 右键「查看原始」：弹窗里分四档看，pb 两档现取（走协议，稍慢） */
-async function onRaw(msg: ChatMsg) {
+/**
+ * 右键「查看消息 / 查看 rawMsg / 查看 rawEvent」：弹窗里分档看，pb 两档现取（走协议，稍慢）。
+ * 点哪一项就落在哪一档上（QQBot 只有前两档，见 rawTabs）。
+ */
+async function onRaw(msg: ChatMsg, tab: RawKey = 'array') {
   rawMsg.value = msg
-  rawTab.value = 'array'
+  rawTab.value = tab
   rawData.value = null
   syncRawPos()
   const session = current.value
@@ -646,6 +741,36 @@ async function onResend(msg: ChatMsg) {
   }
 }
 
+/**
+ * 右键「复读(MD)」：把这条的正文当 markdown 再发一遍。
+ */
+async function onResendMd(msg: ChatMsg) {
+  const session = current.value
+  if (!session) return
+  const md = markdownOf(msg.segments)
+  if (!md) {
+    message.warning('这条消息没有可复读的正文')
+    return
+  }
+  sending.value = true
+  try {
+    const fd = new FormData()
+    fd.set('botId', session.botId)
+    fd.set('type', session.type)
+    fd.set('id', session.id)
+    fd.set('text', md)
+    fd.set('kind', 'markdown')
+    const data = await apiChatSend(fd)
+    // 后端也把这条塞进了缓冲，轮询会再送一次，靠 messageId 去重
+    if (data.message) messages.value.push(...dedupe([data.message]))
+    follow.value = true
+    await scrollToEnd()
+  } catch {
+  } finally {
+    sending.value = false
+  }
+}
+
 /** 合并转发的内容在 QQ 服务端，点开时才去取，取回来填进段里 */
 async function onForward({ msg, seg }: { msg: ChatMsg; seg: MsgSeg }) {
   const session = current.value
@@ -739,12 +864,6 @@ const dateFlags = computed(() => {
   <div class="g-page g-chat">
     <div class="g-page-head">
       <h2 class="g-page-title">消息记录</h2>
-      <p class="g-page-desc">
-        真收真发：这里看到的是机器人真实收到的消息，发出去的也会<b>真的出现在 QQ 里</b>。
-        消息只留在内存（约 {{ status?.max ?? 1000 }} 条），重启即丢；历史记录取自 QQ 服务端，
-        需要适配器支持（OneBot v11 的 NapCat / Lagrange 等可用）。
-        撤回只对机器人自己发的、或机器人有管理权限的消息生效，且有时限。
-      </p>
     </div>
 
     <div class="g-chat-body">
@@ -847,12 +966,15 @@ const dateFlags = computed(() => {
                 :msg="msg"
                 :show-date="dateFlags[i]"
                 @reply="onReply"
+                @reply-msg-id="onReplyByMsgId"
+                @reply-event-id="onReplyByEventId"
                 @recall="onRecall"
                 @forward="onForward"
                 @at="onAt"
                 @raw="onRaw"
                 @poke="onPoke"
                 @resend="onResend"
+                @resend-md="onResendMd"
               />
             </div>
           </div>
@@ -868,9 +990,9 @@ const dateFlags = computed(() => {
             :disabled="!bots.length"
             :sending="sending"
             :max-images="maxImages"
+            :qqbot="isQQBot"
             :reply="replyTo"
             @send="onSend"
-            @send-raw="onSendRaw"
             @cancel-reply="replyTo = null"
           />
         </template>
@@ -906,7 +1028,7 @@ const dateFlags = computed(() => {
       </p>
       <a-spin :spinning="rawLoading">
         <a-tabs v-model:active-key="rawTab" size="small">
-          <a-tab-pane v-for="t in RAW_TABS" :key="t.key" :tab="t.title">
+          <a-tab-pane v-for="t in rawTabs" :key="t.key" :tab="t.title">
             <div class="g-chat-rawbar">
               <span class="g-chat-rawhint">{{ t.hint }}</span>
               <a-button type="text" size="small" @click="copyRaw">
@@ -931,14 +1053,19 @@ const dateFlags = computed(() => {
 .g-chat {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.g-page-head {
+  flex: none;
 }
 
 .g-chat-body {
   display: flex;
   gap: 10px;
-  height: calc(100vh - 250px);
-  min-height: 440px;
+  flex: 1;
+  min-height: 0;
 }
 
 .g-chat-side {
@@ -1075,7 +1202,7 @@ const dateFlags = computed(() => {
 .g-chat-new {
   position: absolute;
   right: 16px;
-  bottom: 120px;
+  bottom: 148px;
   display: inline-flex;
   align-items: center;
   gap: 4px;

@@ -3,8 +3,11 @@
  * 消息流里的一条。
  *
  * bot 自己发的靠右，别人的靠左。消息头（头像 + 昵称 + 群头衔 + 时间）在气泡上方，
- * 操作收敛到右键菜单（复制 / 引用 / 撤回），跟参考图一致；悬浮时出现一个「更多」入口，
- * 点开是同一个菜单，方便触屏和习惯左键的人。
+ * 操作收敛到右键菜单，跟参考图一致；悬浮时出现一个「更多」入口，点开是同一个菜单，
+ * 方便触屏和习惯左键的人。点头像弹出这个人的信息卡。
+ *
+ * 菜单按适配器分叉：QQ 官方机器人多出 rawMsg / rawEvent 两档原文、两种被动回复
+ * （msg_id / event_id）和「复读(MD)」，其余适配器只有通用那几项。
  */
 import { computed, inject, ref } from 'vue'
 import { message } from 'ant-design-vue'
@@ -17,20 +20,30 @@ import type { ChatMsg, MsgSeg } from '@/api'
 /** 一条消息最多复制几张图，多了粘贴目标也接不住 */
 const MAX_COPY_IMAGES = 9
 
+/** 群身份的显示名，认不出就原样显示 */
+const ROLE_TEXT: Record<string, string> = {owner: '群主', admin: '管理员', member: '群成员'}
+
 const props = defineProps<{ msg: ChatMsg; showDate: boolean }>()
 
 const emit = defineEmits<{
+  /** 右键「引用回复」：QQ 上显示成一条引用，所有适配器都有 */
   reply: [msg: ChatMsg]
+  /** 右键「使用本消息 msg_id 回复」：官bot 的被动回复，只有 QQBot 有 */
+  replyMsgId: [msg: ChatMsg]
+  /** 右键「使用本消息 event_id 回复」：同上，带的是 event_id */
+  replyEventId: [msg: ChatMsg]
   recall: [msg: ChatMsg]
   forward: [payload: { msg: ChatMsg; seg: MsgSeg }]
   /** 右键 @：把消息发送者塞进输入框的 @ 列表 */
   at: [msg: ChatMsg]
-  /** 右键「查看原始」：把这条消息的结构弹出来看 */
-  raw: [msg: ChatMsg]
+  /** 右键「查看消息 / rawMsg / rawEvent」：弹出来看，落在哪一档由 tab 决定 */
+  raw: [msg: ChatMsg, tab: 'array' | 'raw']
   /** 右键「戳一戳」：对消息发送者 */
   poke: [msg: ChatMsg]
   /** 右键「复读」：把这条按段原样再发一条（图片 / 表情都不会被降级成文字） */
   resend: [msg: ChatMsg]
+  /** 右键「复读(MD)」：把这条的正文当 markdown 再发一遍 */
+  resendMd: [msg: ChatMsg]
 }>()
 
 const avatarFailed = ref(false)
@@ -38,6 +51,12 @@ const avatarFailed = ref(false)
 /** 消息所属账号的适配器名与 QQBot appid，由 chat 页注入 —— QQBot 的头像地址跟 QQ 号那套不一样 */
 const botAdapter = inject<((uin?: string) => string) | null>('chatBotAdapter', null)
 const botAppId = inject<((uin?: string) => string) | null>('chatBotAppId', null)
+
+/**
+ * 这条消息所在账号是不是 QQ 官方机器人。右键菜单与信息卡都按它分叉 ——
+ * rawMsg / rawEvent、两种被动回复、复读(MD) 都是 QQBot 专有的。
+ */
+const isQQBot = computed(() => (botAdapter?.(props.msg.botId) ?? '') === 'QQBot')
 
 const name = computed(() => {
   const s = props.msg.sender
@@ -84,6 +103,9 @@ function toText(withImage: boolean) {
   for (const seg of props.msg.segments) {
     if (seg.type === 'text') out += seg.text ?? ''
     else if (seg.type === 'at') out += `@${seg.name || seg.qq} `
+    // markdown 段按渲染后的样子带走：复制出去的是 `[图片]`、链接文字，
+    // 而不是 `![图片](https://…)` 这种源码
+    else if (seg.type === 'markdown') out += mdToText(seg.content ?? '')
     else if (seg.type === 'image') out += withImage ? '[图片] ' : ''
     else if (seg.type === 'record') out += '[语音] '
     else if (seg.type === 'video') out += '[视频] '
@@ -93,6 +115,32 @@ function toText(withImage: boolean) {
   }
   return out.trim()
 }
+
+/** markdown 压成纯文本。图片的 alt 里带 `#宽px #高px` 的那种是 QQ 自己加的，认不出内容 */
+function mdToText(content: string) {
+  return String(content ?? '')
+    .replace(/!\[([^\]\n]*)\]\([^)]*\)/g, (whole, alt) => (alt && !alt.includes('#') ? alt : '[图片]'))
+    .replace(/\[([^\]\n]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[>\s]+/gm, '')
+    .replace(/[`*_~]+/g, '')
+}
+
+/**
+ * 点头像弹出的信息卡。
+ */
+const userRows = computed(() => {
+  const s = props.msg.sender
+  const rows: Array<{ label: string; value: string }> = []
+  if (props.msg.self) rows.push({label: '来源', value: '机器人自己'})
+  if (s.card && s.card !== s.nickname) rows.push({label: '群名片', value: s.card})
+  if (s.role) rows.push({label: '群身份', value: ROLE_TEXT[s.role] ?? s.role})
+  if (s.title) rows.push({label: '群头衔', value: s.title})
+  const openid = s.openid || (isQQBot.value ? String(s.userId).split(':').pop() ?? '' : '')
+  if (openid) rows.push({label: 'openid', value: openid})
+  rows.push({label: isQQBot.value ? '账号' : 'QQ', value: s.userId || '未知'})
+  if (s.unionid) rows.push({label: 'unionid', value: s.unionid})
+  return rows
+})
 
 /** 跟图片一起复制时用的文本 */
 const copyText = computed(() => toText(false))
@@ -129,12 +177,18 @@ function imgSrcs(seg: MsgSeg): string[] {
 /** a-menu 的点击回调，key 见模板菜单项 */
 function onMenuClick({ key }: { key: string }) {
   if (key === 'reply') emit('reply', props.msg)
+  else if (key === 'replyMsgId') emit('replyMsgId', props.msg)
+  else if (key === 'replyEventId') emit('replyEventId', props.msg)
   else if (key === 'recall') emit('recall', props.msg)
   else if (key === 'copy') void copyMessage()
   else if (key === 'at') emit('at', props.msg)
-  else if (key === 'raw') emit('raw', props.msg)
+  // 「查看消息」落在段数组那一档，rawMsg / rawEvent 各自落在对应档上
+  else if (key === 'raw') emit('raw', props.msg, 'array')
+  else if (key === 'rawMsg') emit('raw', props.msg, 'array')
+  else if (key === 'rawEvent') emit('raw', props.msg, 'raw')
   else if (key === 'poke') emit('poke', props.msg)
   else if (key === 'resend') emit('resend', props.msg)
+  else if (key === 'resendMd') emit('resendMd', props.msg)
 }
 
 /** 整条复制：文本和图片一起进剪贴板，跟沙盒一致 */
@@ -181,17 +235,39 @@ async function copyMessage() {
       :get-popup-container="getPopupContainer"
     >
       <div class="g-cmsg-row">
-        <span class="g-cmsg-avatar">
-          <img
-            v-if="avatar && !avatarFailed"
-            :src="avatar"
-            :alt="name"
-            loading="lazy"
-            @error="avatarFailed = true"
-          />
-          <!-- 头像取自腾讯，离线、被墙、或 QQBot 下拿不到地址时退回首字 -->
-          <span v-else class="g-cmsg-avatar-text">{{ name.slice(0, 1) }}</span>
-        </span>
+        <!-- 点头像看这个人的信息 -->
+        <a-popover
+          trigger="click"
+          placement="rightTop"
+          :get-popup-container="getPopupContainer"
+        >
+          <template #content>
+            <div class="g-cmsg-user">
+              <div class="g-cmsg-user-head">
+                <img v-if="avatar && !avatarFailed" :src="avatar" :alt="name" />
+                <span v-else class="g-cmsg-user-fallback">{{ name.slice(0, 1) }}</span>
+                <span class="g-cmsg-user-nick">{{ name }}</span>
+              </div>
+              <dl class="g-cmsg-user-rows">
+                <template v-for="row in userRows" :key="row.label">
+                  <dt>{{ row.label }}</dt>
+                  <dd :title="row.value">{{ row.value }}</dd>
+                </template>
+              </dl>
+            </div>
+          </template>
+          <span class="g-cmsg-avatar" title="点击查看用户信息">
+            <img
+              v-if="avatar && !avatarFailed"
+              :src="avatar"
+              :alt="name"
+              loading="lazy"
+              @error="avatarFailed = true"
+            />
+            <!-- 头像取自腾讯，离线、被墙、或 QQBot 下拿不到地址时退回首字 -->
+            <span v-else class="g-cmsg-avatar-text">{{ name.slice(0, 1) }}</span>
+          </span>
+        </a-popover>
 
         <div class="g-cmsg-main">
           <div class="g-cmsg-meta">
@@ -227,22 +303,51 @@ async function copyMessage() {
             <GIcon icon="ant-design:copy-outlined" :size="13" />
             复制
           </a-menu-item>
-          <a-menu-item key="raw">
+          <template v-if="isQQBot">
+            <a-menu-item key="rawMsg">
+              <GIcon icon="ant-design:code-outlined" :size="13" />
+              查看 rawMsg
+            </a-menu-item>
+            <a-menu-item v-if="!msg.self" key="rawEvent">
+              <GIcon icon="ant-design:file-text-outlined" :size="13" />
+              查看 rawEvent
+            </a-menu-item>
+          </template>
+          <a-menu-item v-else key="raw">
             <GIcon icon="ant-design:code-outlined" :size="13" />
-            查看原始消息
+            查看消息
           </a-menu-item>
           <a-menu-item key="resend">
             <GIcon icon="ant-design:reload-outlined" :size="13" />
-            复读
+            {{ isQQBot ? '复读' : '普通复读' }}
           </a-menu-item>
-          <a-menu-item key="poke">
+          <a-menu-item v-if="isQQBot" key="resendMd">
+            <GIcon icon="ant-design:edit-outlined" :size="13" />
+            复读(MD)
+          </a-menu-item>
+          <!-- 官bot 没有戳一戳这个接口，留着入口但置灰，比点了必失败强 -->
+          <a-menu-item key="poke" :disabled="isQQBot">
             <GIcon icon="ant-design:aim-outlined" :size="13" />
-            戳一戳
+            戳一戳{{ isQQBot ? '（官bot 不支持）' : '' }}
           </a-menu-item>
           <a-menu-item key="reply">
             <GIcon icon="ant-design:rollback-outlined" :size="13" />
-            引用这条
+            引用回复
           </a-menu-item>
+          <!--
+            两种被动回复只有官bot 有：带 msg_id / event_id 才算被动消息，
+            不然要走主动配额。跟上面的「引用回复」是两回事 —— 那个只让 QQ 显示一条引用。
+          -->
+          <template v-if="isQQBot">
+            <a-menu-item key="replyMsgId">
+              <GIcon icon="ant-design:key-outlined" :size="13" />
+              使用本消息 msg_id 回复
+            </a-menu-item>
+            <a-menu-item v-if="msg.eventId" key="replyEventId">
+              <GIcon icon="ant-design:thunderbolt-outlined" :size="13" />
+              使用本消息 event_id 回复
+            </a-menu-item>
+          </template>
           <a-menu-item v-if="canRecall" key="recall">
             <GIcon icon="ant-design:delete-outlined" :size="13" />
             撤回
@@ -271,8 +376,69 @@ async function copyMessage() {
 
 .g-cmsg-avatar {
   flex: none;
+  display: block;
   width: 32px;
   height: 32px;
+  cursor: pointer;
+}
+
+/* ---------------- 点头像弹出的信息卡 ---------------- */
+
+.g-cmsg-user {
+  max-width: 280px;
+  color: var(--g-text);
+  font-size: 13px;
+}
+
+.g-cmsg-user-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--g-border);
+}
+
+.g-cmsg-user-head img,
+.g-cmsg-user-fallback {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--g-bg-soft);
+  object-fit: cover;
+}
+
+.g-cmsg-user-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--g-text-sub);
+  font-size: 15px;
+}
+
+.g-cmsg-user-nick {
+  min-width: 0;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.g-cmsg-user-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.g-cmsg-user-rows dt {
+  color: var(--g-text-dim);
+  white-space: nowrap;
+}
+
+.g-cmsg-user-rows dd {
+  margin: 0;
+  color: var(--g-text-sub);
+  word-break: break-all;
 }
 
 .g-cmsg-avatar img {
