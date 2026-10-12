@@ -10,6 +10,7 @@ import { computed, inject, ref } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import GIcon from '@/components/GIcon.vue'
+import { applyMdImageSize } from '@/utils/mdImage'
 import type { MsgBtn, MsgSeg } from '@/api'
 
 const props = defineProps<{ seg: MsgSeg }>()
@@ -111,9 +112,10 @@ const mdHtml = computed(() => {
   const content = props.seg.content
   if (!content) return ''
   const parsed = marked.parse(content, { async: false, breaks: true }) as string
-  return purify.sanitize(parsed, {
+  const clean = purify.sanitize(parsed, {
     FORBID_TAGS: ['style', 'script', 'iframe', 'form', 'input'],
   })
+  return applyMdImageSize(clean)
 })
 
 const sizeText = computed(() => {

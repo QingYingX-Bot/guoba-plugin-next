@@ -14,6 +14,7 @@ import type {
   PluginItem,
   SystemStatus,
 } from '@/types'
+import { StringifyOptions } from 'node:querystring'
 
 /* ---------------- 登录 / 用户 ---------------- */
 
@@ -938,8 +939,14 @@ export interface ChatSession extends ChatActiveItem {
   type: ChatType
   id: string
   name: string
+  /** 群备注（用户自己起的别名，见后端 model/chatPrefs.js）。列表显示时优先用它 */
+  note?: string
   /** 后端按适配器算好的头像地址，拼不出来时是空串 */
   avatar?: string
+  /** 置顶（面板自己的状态，见后端 model/chatPrefs.js），置顶的排最前 */
+  pinned?: boolean
+  /** 已被拉黑，列表上给个标记 */
+  blacklisted?: boolean
 }
 
 export interface ChatMsg {
@@ -1021,6 +1028,89 @@ export const apiChatSessions = (params: {
     rev: number
     sessions: Record<string, ChatActiveItem>
   }>('/chat/sessions', params)
+
+/**
+ * 群信息。
+ */
+export interface ChatGroupInfo {
+  key: string
+  botId: string
+  id: string
+  type: 'group'
+  name: string
+  avatar: StringifyOptions
+  openid: string
+  recordedMemberCount: number
+  liveMemberCount: number
+  maxMemberCount: number
+  remark: string
+  intro: string
+  category: string
+  tags: string[]
+  liveError: string
+  refreshedAt: number
+  pinned: boolean
+  blacklisted: boolean
+}
+
+/**
+ * 用户信息（私聊）
+ */
+export interface ChatUserInfo {
+  key: string
+  botId: string
+  id: string
+  type: 'friend'
+  name: string
+  avatar: string
+  openid: string
+  unionid: string
+  remark: string
+  liveError: string
+  refreshedAt: number
+  pinned: boolean
+  blacklisted: boolean
+  qqbot: boolean
+}
+
+export const apiChatGroupInfo = (params: { botId: string; id: string }) =>
+  get<ChatGroupInfo>('/chat/group-info', params, { showError: false })
+
+export const apiChatUserInfo = (params: { botId: string; id: string }) =>
+  get<ChatUserInfo>('/chat/user-info', params, { showError: false })
+
+/** 刷新群信息：跳过缓存强制问一次适配器，返回的是同一份结构 */
+export const apiChatRefreshGroup = (body: { botId: string; id: string }) =>
+  post<ChatGroupInfo>('/chat/refresh-group', body)
+
+/**
+ * 设置 / 清除群备注。传空串即清除。
+ */
+export const apiChatNote = (body: { botId: string; id: string; note: string }) =>
+  post<{ key: string; note: string; saved: boolean }>('/chat/note', body)
+
+/** 置顶 / 取消置顶。saved 为 false 表示没写进磁盘，重启会丢 */
+export const apiChatPin = (body: {
+  botId: string
+  type: ChatType
+  id: string
+  pinned: boolean
+}) => post<{ key: string; pinned: boolean; saved: boolean }>('/chat/pin', body)
+
+/** 拉黑 / 取消拉黑。note 是「同步到机器人那边」这一步的结果，空串表示不用提示 */
+export const apiChatBlacklist = (body: {
+  botId: string
+  type: ChatType
+  id: string
+  blacklisted: boolean
+}) =>
+  post<{
+    key: string
+    blacklisted: boolean
+    saved: boolean
+    mirrored: boolean
+    note: string
+  }>('/chat/blacklist', body)
 
 /** 拉历史消息。seq 为向上翻页的游标，0 取最新 */
 export const apiChatHistory = (params: {
