@@ -5,8 +5,27 @@ import {GuobaError, Service} from '#guoba.framework'
 import {AssetStore, flattenOneBot, normalizeMsg, toBase64File} from './model/msgSegment.js'
 import {groupAvatarUrl, userAvatarUrl} from './model/avatar.js'
 import {listBots, ensureContacts} from './model/bots.js'
+import {
+  getNote,
+  isPinned,
+  setPinned,
+  isBlacklisted,
+  setBlacklisted,
+  setNote,
+} from './model/chatPrefs.js'
+import {mirrorGroupBlacklist} from './model/qqbotBlacklist.js'
 import {packetSupport} from './model/packetSupport.js'
 import {describeSendError} from './model/sendError.js'
+import {
+  decodeCursor as decodeRedisCursor,
+  encodeCursor as encodeRedisCursor,
+  getRedisClient,
+  isQQBot,
+  noticeText,
+  pureId as pureOpenid,
+  qqRedisKeys,
+  readPage as readRedisPage,
+} from './model/qqRedisStore.js'
 
 /**
  * 实时缓冲最多留多少条。
@@ -25,6 +44,18 @@ const MAX_TAIL = 200
 const MAX_SEND_IMAGES = 5
 /** 单张图片的大小上限 */
 const MAX_SEND_IMAGE_SIZE = 20 * 1024 * 1024
+/**
+ * 富媒体单个文件的上限。
+ */
+const MAX_SEND_MEDIA_SIZE = 60 * 1024 * 1024
+/**
+ * 富媒体按扩展名判类型。
+ */
+const MEDIA_EXT = {
+  video: new Set(['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm', 'm4v', '3gp', 'ts', 'mpeg', 'mpg']),
+  record: new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'wma', 'm4a', 'opus', 'ape', 'aiff', 'amr', 'silk']),
+  image: new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tiff', 'tif']),
+}
 /** 一条消息最多 @ 几个人 */
 const MAX_SEND_ATS = 10
 /** Raw JSON 的长度上限 */
@@ -54,6 +85,18 @@ const PB_RAW_KEYS = ['pb', 'pb_raw', 'pbRaw', 'protobuf', 'raw_pb', 'msg_pb']
  * 匿名之类的杂项，不是消息内容。
  */
 const PB_ELEM_PATH = ['3', '6', '3', '1', '2']
+/**
+ * QQBot markdown 正文里的 @ 人写法：`<@openid>`（QQBot-Plugin 拼正文时把 at 段拍成这个）。
+ *
+ * 网页上认不了这种标签，只会原样露出 32 位十六进制。成员表里有名字就换成 `@昵称`，
+ * 跟消息里普通 at 段一个待遇。
+ */
+const MD_MENTION_RE = /<@!?([0-9a-fA-F]{16,})>/g
+/** 同上，但连左右空白一起吃掉 —— 私聊里整个抹掉时用它，免得留下双空格 */
+const MD_MENTION_SPACE_RE = /[ \t]*<@!?[0-9a-fA-F]{16,}>[ \t]*/g
+/** 这段正文里有没有要补名字的 `<@openid>` */
+const hasMdMention = (seg) =>
+  seg?.type === 'markdown' && typeof seg.content === 'string' && seg.content.includes('<@')
 const PB_ELEM_DROP = ['37', '9', '16']
 /** Packet-plugin 的 helper，protobuf 编解码和 send_packet 都靠它 */
 const PACKET_HELPER = '../../../../Packet-plugin/model/PacketHelper.js'
@@ -88,6 +131,162 @@ const MAX_PAGE_SIZE = 100
 const PREVIEW_LEN = 40
 
 /**
+ * 会话 key。
+ */
+function sessionKey(botId, type, id) {
+  return `${String(botId ?? '').trim()}:${type === 'friend' ? 'friend' : 'group'}:${String(id ?? '').trim()}`
+}
+
+/**
+ * 现取群信息可以试的动作名。
+ *
+ * OneBot v11 没有标准接口，各家叫法不同：NapCat / Lagrange 是 `get_group_info`，
+ * 有的实现另给一个字段更全的 `get_group_detail` / `get_group_info_ex`。逐个试，
+ * 谁认用谁 —— 跟 {@link ChatService#poke} 一个路子。
+ *
+ * QQ 官方机器人不走这里（它没有 sendApi），单独走 {@link ChatService#fetchQQBotGroupInfo}。
+ */
+const GROUP_INFO_ACTIONS = ['get_group_info', 'get_group_detail', 'get_group_info_ex']
+
+/**
+ * 群信息里各字段在各家实现里的叫法。
+ *
+ * 适配器把群信息包在不同的壳里（扁平对象、`{data:{…}}`、`{group:{…}}`），逐个试键名
+ * 比给每家写一套映射省事，跟 model/bots.js 的 ID_KEYS / LIST_WRAP_KEYS 同一思路。
+ *
+ * **QQ 官方机器人的那套键名（`group_finger_memo` / `group_class_text` / `group_member_num`）
+ * 一定要带上**：它既出现在 `sdk.getGroupInfo()` 的返回里，也是 QQBot-Plugin 写进 `bot.gl`
+ * 的那份（见 adapter/pick.js 的 setGroupMap）。少一个键名，QQBot 的群信息卡就是一片
+ * 「（未设置）／（无）」，而数据其实一直在手边。
+ */
+const GROUP_INFO_FIELDS = {
+  name: ['group_name', 'groupName', 'name'],
+  memberCount: ['member_count', 'memberCount', 'member_num', 'memberNum', 'group_member_num'],
+  maxMemberCount: ['max_member_count', 'maxMemberCount', 'max_member_num', 'maxMemberNum'],
+  remark: ['group_remark', 'groupRemark', 'remark', 'group_memo', 'groupMemo', 'memo'],
+  intro: [
+    'group_intro',
+    'groupIntro',
+    'intro',
+    'group_desc',
+    'groupDesc',
+    'group_description',
+    'description',
+    // QQ 官方机器人把「群简介」叫群指纹备注
+    'group_finger_memo',
+    'fingerMemo',
+  ],
+  category: [
+    'group_class',
+    'groupClass',
+    'group_classify',
+    'category',
+    'class',
+    // QQ 官方机器人的「群分类」，是个给人看的短文本（如「游戏」「交友扩列」）
+    'group_class_text',
+    'classText',
+  ],
+  tags: ['group_tags', 'groupTags', 'tags'],
+}
+/** 字段往下钻几层，够穿透 data / group 这种一层壳就行 */
+const GROUP_INFO_DEPTH = 3
+/** 现取的群信息缓存多久。右键「刷新群信息」会绕过它 */
+const GROUP_LIVE_TTL = 60 * 1000
+
+/**
+ * 用户信息（私聊那边点头像看的那张卡）的候选键名。
+ *
+ * 比群信息简单得多：昵称、好友备注、openid / unionid，就这四样。
+ * 面板记录那份（`bot.fl`）与 OneBot 现取那份（`get_friend_info`）键名基本一致，
+ * 只有 QQ 官方机器人会在 `fl` 里额外塞 `openid` / `unionid`。
+ */
+const USER_INFO_FIELDS = {
+  name: ['nickname', 'nick', 'name', 'user_name'],
+  remark: ['remark', 'friend_remark', 'friendRemark', 'note'],
+  openid: ['openid', 'open_id'],
+  unionid: ['unionid', 'union_id'],
+}
+/**
+ * OneBot 系问好友信息的动作名。
+ *
+ * 没有统一标准：go-cqhttp 系是 `get_friend_info`，OneBot v11 标准里叫 `get_stranger_info`。
+ * 跟群信息、戳一戳一样逐个试，谁认用谁。
+ */
+const USER_INFO_ACTIONS = ['get_friend_info', 'get_stranger_info']
+/** 现取的用户信息缓存多久，跟群信息一个节奏 */
+const USER_LIVE_TTL = GROUP_LIVE_TTL
+
+/**
+ * 在响应里按候选键名找值，可以往下钻几层。
+ *
+ * 默认只要标量（群名、人数这些都是），`allowArray` 打开后才认数组 ——
+ * 群标签是数组，被标量过滤挡掉的话 `tagsOf` 永远拿不到东西。
+ */
+function probeFields(source, keys, depth = GROUP_INFO_DEPTH, allowArray = false) {
+  if (!source || typeof source !== 'object' || depth < 0) return undefined
+  for (const key of keys) {
+    const value = source[key]
+    if (value == null || value === '') continue
+    if (typeof value === 'object' && !(allowArray && Array.isArray(value))) continue
+    return value
+  }
+  for (const value of Object.values(source)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const hit = probeFields(value, keys, depth - 1, allowArray)
+      if (hit !== undefined) return hit
+    }
+  }
+  return undefined
+}
+
+/** 把探到的值收成字符串，空值一律给空串，前端统一按「（未设置）」显示 */
+function textOf(source, keys) {
+  const hit = probeFields(source, keys)
+  return hit == null ? '' : String(hit).trim()
+}
+
+/** 把探到的值收成正整数，认不出给 0 */
+function numOf(source, keys) {
+  const hit = Number(probeFields(source, keys))
+  return Number.isFinite(hit) && hit > 0 ? Math.round(hit) : 0
+}
+
+/**
+ * 群标签：QQ 官方机器人每个群最多挂十几个词，OneBot 系没有这个概念。
+ *
+ * 元素可能是裸字符串，也可能是 `{text}` / `{name}` 这种对象，两种都收。
+ */
+function tagsOf(source) {
+  const hit = probeFields(source, GROUP_INFO_FIELDS.tags, GROUP_INFO_DEPTH, true)
+  if (!Array.isArray(hit)) return []
+  const out = []
+  for (const item of hit) {
+    const text = typeof item === 'string' ? item : (item?.text ?? item?.name ?? '')
+    const t = String(text ?? '').trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  return out
+}
+
+/**
+ * 把 QQ 官方机器人 `getGroupInfo` 的报错翻译成人话。
+ *
+ * 错误码是 QQ 那套（跟 OneBot 的 retcode 不是一个体系），QQBot-Web-Adapter 里也是
+ * 按同一组码分的，这里对齐它 —— 面板上写「11293」没人看得懂，
+ * 但「机器人非群成员」一眼就知道该干什么。
+ */
+function describeQQBotGroupError(err) {
+  const msg = String(err?.message ?? err ?? '')
+  if (/11293|非群成员|鉴权失败|kicked/i.test(msg)) {
+    return '机器人不是这个群的成员，取不到群信息'
+  }
+  if (/1125[0-9]|invalid request/i.test(msg)) {
+    return '该群状态异常（可能已解散或封禁），取不到群信息'
+  }
+  return `QQ 那边取群信息失败：${msg || '未知错误'}`
+}
+
+/**
  * 已挂上的 message 监听存在 process 上。
  *
  * 热重载时本模块会被重新 import，模块级变量与实例都是新的，但上一代挂在 Bot 上的监听
@@ -96,6 +295,18 @@ const PREVIEW_LEN = 40
 const LISTENER_KEY = Symbol.for('guoba.chatService.listener')
 
 /** 非文本段在会话列表摘要里的占位 */
+/**
+ * markdown 段在会话列表里的摘要。
+ */
+function mdPreview(content) {
+  return String(content ?? '')
+    // 图片：alt 里带 `#宽px #高px` 的那种是 QQ 自动加的，认不出内容，统一写「图片」
+    .replace(/!\[([^\]\n]*)\]\([^)]*\)/g, (whole, alt) => (alt && !alt.includes('#') ? alt : '[图片]'))
+    .replace(/\[([^\]\n]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[>\s]+/gm, '')
+    .replace(/[`*_~]+/g, '')
+}
+
 const PREVIEW_TEXT = {
   image: '[图片]',
   record: '[语音]',
@@ -107,6 +318,20 @@ const PREVIEW_TEXT = {
   markdown: '[Markdown]',
   button: '',
   reply: '',
+}
+
+/**
+ * 富媒体文件该用哪个段类型。
+ * @param file multer 给的文件对象（有 originalname / mimetype）
+ */
+function mediaSegType(file) {
+  const mime = String(file?.mimetype ?? '').toLowerCase()
+  const name = String(file?.originalname ?? '').toLowerCase()
+  const ext = name.includes('.') ? name.split('.').pop() : ''
+  if (mime.startsWith('image/') || MEDIA_EXT.image.has(ext)) return 'image'
+  if (mime.startsWith('video/') || MEDIA_EXT.video.has(ext)) return 'video'
+  if (mime.startsWith('audio/') || MEDIA_EXT.record.has(ext)) return 'record'
+  return 'file'
 }
 
 /**
@@ -149,7 +374,9 @@ function isPrivateIp(ip) {
  * 1. **实时追新**：挂一个 `Bot.on('message')`，把收到的消息规范化后进环形缓冲，
  *    前端拿游标轮询增量（同 LogService 的范式，不用长连接）。
  * 2. **拉历史**：OneBot v11 的 pick 结果上有 `getChatHistory`，取的是 QQ 服务端记录，
- *    含 bot 自己发的，比自建存储可靠。适配器没这方法就只能看面板运行期间的消息。
+ *    含 bot 自己发的，比自建存储可靠。QQ 官方机器人（QQBot 适配器）没这个方法，
+ *    改从 QQBot-Plugin 落进 Redis 的那份记录里读（见
+ *    model/qqRedisStore.js）。两者都没有就只能看面板运行期间的消息。
  *
  * 缓冲只在内存里，重启即丢；要长期留存请用 QQ 客户端。
  */
@@ -211,6 +438,20 @@ export default class ChatService extends Service {
   #packet = undefined
   /** `botId:type:id` —— 这些会话上「不带 message_seq 重试」试过也没用，见 {@link getHistory} */
   #noRetryHistory = new Set()
+  /**
+   * 现取的群信息缓存：会话 key -> {at, data}。
+   *
+   * 群信息弹窗一打开就要问一次适配器，而它比读缓存慢得多（协议端往返），
+   * 来回点几次同一个群没必要每次都问。右键「刷新群信息」用 refresh 绕开它。
+   */
+  #groupLiveCache = new Map()
+  /**
+   * 现取的用户信息缓存：会话 key -> {at, data}。理由同群信息那份。
+   *
+   * 只有 OneBot 系会往里放东西 —— QQ 官方机器人不现取（SDK 上压根没有好友信息接口），
+   * 见 {@link ChatService#userInfo}。
+   */
+  #userLiveCache = new Map()
   #handler = null
   #attached = false
 
@@ -278,11 +519,24 @@ export default class ChatService extends Service {
       : String((self ? (e.target_id ?? e.peer_id) : null) ?? e.user_id ?? '')
     if (!botId || !id) return
 
-    const segments = await normalizeMsg(e.message, {download: false})
+    /**
+     * QQBot 的段里有三样 OneBot 系没有的东西，交给解析层处理（见 #msgOpts）：
+     * 裸 openid 的 @、客户端表情的内联标记、以及**机器人发来的 markdown**。
+     *
+     * 别的机器人（`author.bot`）的正文一律按 markdown 走。自己发的那条不算：走 legacy 档时正文就是纯文本，
+     * 当 markdown 解析会把 `#`、`>`、`*` 这些字符按语法吃掉。
+     */
+    const segments = await normalizeMsg(e.message, this.#msgOpts(botId, {
+      botMarkdown: !self && e.raw_event?.d?.author?.bot === true,
+    }))
     // sender 先过一遍 —— 他会进 #names，下面补 @ 名字时就能用上
-    const sender = this.#sender(e.sender, e.user_id, botId)
-    // 补全 @ 段的昵称。放在 #push 之前，进缓冲的就是补齐过的段
-    if (segments.some((s) => s?.type === 'at')) await this.#resolveNames(segments, {botId, type, id})
+    const sender = this.#sender(e.sender, e.user_id, botId, self)
+    // 补全 @ 段的昵称。放在 #push 之前，进缓冲的就是补齐过的段。
+    // markdown 正文里的 `<@openid>` 也得算 —— QQBot 的正文就是 markdown，
+    // 只认 at 段的话这种消息会原样露出 32 位十六进制
+    if (segments.some((s) => s?.type === 'at' || hasMdMention(s))) {
+      await this.#resolveNames(segments, {botId, type, id})
+    }
     const messageId = e.message_id != null ? String(e.message_id) : ''
     await this.#push({
       key: `${botId}:${type}:${id}`,
@@ -290,6 +544,7 @@ export default class ChatService extends Service {
       type,
       id,
       messageId,
+      eventId: String(e.event_id ?? ''),
       messageSeq: this.#seqOf(e),
       time: Number(e.time) || Math.floor(Date.now() / 1000),
       self,
@@ -609,21 +864,47 @@ export default class ChatService extends Service {
     return seq != null && seq !== '' ? String(seq) : ''
   }
 
-  #sender(sender, userId, botId) {
+  /**
+   * normalizeMsg 的适配器开关。
+   * @param botMarkdown 这段正文要不要直接当 markdown 渲染，见 {@link ChatService}
+   */
+  #msgOpts(botId, {botMarkdown = false} = {}) {
+    const bot = this.#bot(botId)
+    const qqbot = isQQBot(bot)
+    return {
+      download: false,
+      botMarkdown,
+      selfId: qqbot ? String(botId ?? '') : '',
+      sep: bot?.adapter?.sep || ':',
+      dropFace: qqbot,
+    }
+  }
+
+  #sender(sender, userId, botId, self = false) {
     const uin = String(sender?.user_id ?? userId ?? '')
     const card = String(sender?.card ?? '')
     const nickname = String(sender?.nickname ?? '')
     const name = card || nickname
-    // 记一份，给之后 @ 他、或别处缺昵称的消息兜底（满了自动挤掉最老的一半）
-    if (name) this.#rememberName(uin, name)
-    // 有的实现上报不带昵称，兜底用之前见过的名字
+    /**
+     * 记一份，给之后 @ 他、或别处缺昵称的消息兜底（满了自动挤掉最老的一半）。
+     *
+     * **机器人自己发的消息要单独记。** QQBot-Plugin 存自家人消息时，`user_id` 写的是
+     * **会话对方**的 id（它存的是会话标识），而 nickname 是机器人自己的。照 user_id 记，
+     * 等于把对方的名字写成了机器人自己 —— 之后正文里 `<@对方openid>` 解析出来就是
+     * `@机器人`（私聊里那个「@狐泽」就是这么来的）。所以这条只按机器人自己的账号记。
+     */
+    if (name) this.#rememberName(self ? String(botId ?? '') : uin, name)
+    // 有的实现上报不带昵称，兜底用之前见过的名字；自家那条别去查 uin，那查出来是对方的
+    const fallback = self ? String(this.#bot(botId)?.nickname ?? '') : this.#names.get(uin) || ''
     return {
       userId: uin,
-      nickname: nickname || this.#names.get(uin) || '',
+      nickname: nickname || fallback || '',
       card,
       role: String(sender?.role ?? ''),
       /** 群头衔，页面上跟在昵称后面显示一个小标签 */
       title: String(sender?.title ?? ''),
+      openid: String(sender?.openid ?? ''),
+      unionid: String(sender?.unionid ?? ''),
       /** QQBot 这类适配器事件里直接带头像地址，没带的按 id 算（见 model/avatar.js） */
       avatar: userAvatarUrl(uin, botId, sender?.avatar),
     }
@@ -682,6 +963,7 @@ export default class ChatService extends Service {
     for (const seg of msg.segments ?? []) {
       if (seg.type === 'text') text += seg.text ?? ''
       else if (seg.type === 'at') text += `@${seg.name || seg.qq}`
+      else if (seg.type === 'markdown') text += mdPreview(seg.content) || PREVIEW_TEXT.markdown
       else text += PREVIEW_TEXT[seg.type] ?? `[${seg.type}]`
       if (text.length > PREVIEW_LEN) break
     }
@@ -698,12 +980,40 @@ export default class ChatService extends Service {
   async #resolveNames(segments, {botId, type, id} = {}, {remember = true} = {}) {
     const groupId = type === 'group' ? String(id ?? '') : ''
     /**
-     * 只有群消息才可能有要找的名字 —— 私聊没有成员列表这回事。
+     * 有要补的名字才值得往下走：群里的 at 段 / markdown 正文里的 `<@openid>`。
+     * 私聊也有 —— 那边没有成员表，但好友表里有对方，见下面 nameOf 的第 2 级。
+     *
      * 白名单那件事不跟它一起早退：一张图也不 @ 的消息（绝大多数）照样要登记 url。
      */
-    const wantNames = !!groupId && segments?.some?.((s) => s?.type === 'at')
+    const wantNames = segments?.some?.((s) => s?.type === 'at' || hasMdMention(s))
     if (!wantNames && !remember) return
     const cold = []
+    /** at 段 / markdown 正文里的 openid 都按 `${selfId}:${openid}` 这个完整形式进缓存 */
+    const bot = this.#bot(botId)
+    const sep = bot?.adapter?.sep || ':'
+    const qqbot = isQQBot(bot)
+    /** 机器人自己被 @ 时段的 `qq` 就是账号本身，成员表里没这一号 */
+    const selfUin = String(botId ?? '')
+    /**
+     * 名字分三级取：
+     * 1. 群名片表（`群号:成员id`）—— 群里发过言的、以及从成员列表拉回来的
+     * 2. 私聊的好友表（`bot.fl`）—— 私聊里没有成员表，正文 @ 的那个人就是会话对方
+     * 3. 全局昵称表 —— 谁发过言就记谁
+     *
+     * 第 3 级只给 QQBot 兜底。它是最不可靠的一级：靠消息里带的 sender 现攒，
+     * 对方一直没说话时就是空的（那时只剩第 2 级撑着）。
+     */
+    const nameOf = (uin) => {
+      const hit = groupId ? this.#memberNames.get(`${groupId}:${uin}`) : ''
+      if (hit) return hit
+      if (!qqbot) return ''
+      // 私聊：直接问好友表，别指望对方发过言
+      if (!groupId) {
+        const friend = textOf(this.#friendEntry(String(uin)), USER_INFO_FIELDS.name)
+        if (friend) return friend
+      }
+      return this.#names.get(String(uin)) || ''
+    }
 
     const walk = (list) => {
       for (const seg of list ?? []) {
@@ -717,16 +1027,38 @@ export default class ChatService extends Service {
         }
         if (seg?.type === 'at' && seg.qq) {
           const uin = String(seg.qq)
+          if (!seg.name && uin !== 'all') {
+            if (uin === selfUin) {
+              seg.name = String(bot?.nickname ?? '') || '机器人'
+            } else {
+              const name = nameOf(uin)
+              if (name) seg.name = name
+              else if (groupId) cold.push(uin)
+            }
+          }
+        }
+        if (hasMdMention(seg)) {
           /**
-           * 全局那份按 QQ 记名字，是给「同一个人在别处发过言」兜底的。
-           *
-           * 只在缓存里没有时才补：群名片跨群会串（同一个人在 A 群叫「张三」、B 群叫
-           * 「隔壁老王」），而这里的名字会跟着消息一起留在缓冲里，串了就一直是错的。
+           * 私聊里没有 @ 这回事 —— 一对一只剩对方一个人，@ 谁都是他，写了也是废话。
+           * 所以正文里的 `<@openid>` 整个抹掉：既别露出 32 位十六进制，也别写成 `@对方`。
+           * 群里照旧换成 `@昵称`。
            */
-          if (!seg.name) {
-            const name = groupId ? this.#memberNames.get(`${groupId}:${uin}`) : ''
-            if (name) seg.name = name
-            else if (groupId) cold.push(uin)
+          if (!groupId) {
+            const before = seg.content
+            // 连左右空白一起吃，免得 `你好 <@x> 在吗` 抹完变成双空格
+            seg.content = before.replace(MD_MENTION_SPACE_RE, ' ')
+            // 原来就以 @ 开头时上面会留一个行首空格；只在这种时候去，
+            // 别的一律不动 —— 无差别 trim 会把 markdown 的缩进代码块也吃掉
+            if (/^[ \t]*<@/.test(before)) seg.content = seg.content.replace(/^[ \t]+/, '')
+          } else {
+            seg.content = seg.content.replace(MD_MENTION_RE, (whole, openid) => {
+              const uin = `${botId}${sep}${openid}`
+              const name = nameOf(uin)
+              if (name) return `@${name}`
+              // 缓存里还没有就先原样留着，名字取回来后再走一趟（调用方本来就跑两趟）
+              cold.push(uin)
+              return whole
+            })
           }
         }
         if (Array.isArray(seg?.nodes)) {
@@ -810,7 +1142,9 @@ export default class ChatService extends Service {
       if (typeof group?.pickMember !== 'function') continue
       try {
         const member = group.pickMember(uin)
-        const info = typeof member?.getInfo === 'function' ? await member.getInfo() : member?.info
+        const info = typeof member?.getInfo === 'function' ? await member.getInfo()
+          : typeof member?.getGroupMemberInfo === 'function' ? await member.getGroupMemberInfo()
+            : member?.info
         const name = String(info?.card || info?.nickname || info?.name || '').trim()
         if (name) this.#memberNames.set(key, name)
         else this.#markMissed(key)
@@ -906,8 +1240,10 @@ export default class ChatService extends Service {
       const name = String(
         (isGroup ? info?.group_name : (info?.nickname ?? info?.remark)) ?? '',
       )
+      // 关键词只匹配真名与号码，不匹配备注 —— 备注是用户自己起的别名，
+      // 拿它参与搜索会让「按群名找群」变成「按我起的名字找群」，反而找不着
       if (kw && !name.toLowerCase().includes(kw) && !sid.includes(kw)) continue
-      const key = `${owner}:${isGroup ? 'group' : 'friend'}:${sid}`
+      const key = sessionKey(owner, isGroup ? 'group' : 'friend', sid)
       const active = this.#sessions.get(key)
       list.push({
         key,
@@ -915,6 +1251,9 @@ export default class ChatService extends Service {
         type: isGroup ? 'group' : 'friend',
         id: sid,
         name,
+        // 群备注（用户自己起的别名）。前端显示时优先用它，真名放 title ——
+        // QQBot-Web-Adapter 也是「优先备注，其次真名」，否则备注就没意义了
+        note: getNote(key),
         // 头像地址按适配器算，QQBot 的 openid 前端拼不出来（见 model/avatar.js）
         avatar: isGroup
           ? groupAvatarUrl(sid, info?.avatar)
@@ -922,11 +1261,17 @@ export default class ChatService extends Service {
         lastTime: active?.lastTime ?? 0,
         lastText: active?.lastText ?? '',
         unread: active?.unread ?? 0,
+        // 置顶与黑名单是面板自己的状态（见 model/chatPrefs.js），列表里带上让前端能标记
+        pinned: isPinned(key),
+        blacklisted: isBlacklisted(key),
       })
     }
 
-    // 有消息的按最近活跃排前面，其余按号码，顺序稳定不跳动
-    list.sort((a, b) => (b.lastTime - a.lastTime) || a.id.localeCompare(b.id))
+    // 置顶的排最前（且不受有没有消息影响），其余按最近活跃，最后按号码 —— 顺序稳定不跳动
+    list.sort((a, b) =>
+      (Number(b.pinned) - Number(a.pinned))
+      || (b.lastTime - a.lastTime)
+      || a.id.localeCompare(b.id))
 
     const size = Math.min(Math.max(Number(pageSize) || 30, 1), MAX_PAGE_SIZE)
     const page = Math.max(Number(pageNo) || 1, 1)
@@ -944,6 +1289,10 @@ export default class ChatService extends Service {
   /**
    * 拉历史消息。
    *
+   * 两条路：OneBot 系走适配器的 `getChatHistory`（QQ 服务端记录），QQBot 系走 Redis
+   * （QQBot-Plugin 落的那份）。都没有就如实返回 `supported: false`，前端会退而显示
+   * 面板运行期间收到的消息。
+   *
    * @param seq   翻页游标，传本地最早一条的 messageSeq；0 或空取最新
    * @param count 条数
    */
@@ -951,8 +1300,18 @@ export default class ChatService extends Service {
     const target = this.#pick(type, id, botId)
     const cursor = this.#seq - 1
     if (typeof target?.getChatHistory !== 'function') {
-      // 非 OneBot 适配器多半没有这能力，前端据此提示「只能看面板运行期间的消息」
-      return {supported: false, messages: [], hasMore: false, cursor}
+      const viaRedis = await this.#historyViaRedis({botId, type, id, seq, count})
+      if (viaRedis) return {...viaRedis, cursor}
+      /**
+       * 非 OneBot 适配器多半没有这能力，前端据此提示「只能看面板运行期间的消息」。
+       * QQBot 另说一句 —— 它有落库的那份记录，读不到多半是存储后端或保存期限的问题，
+       * 泛泛地讲「适配器不支持」会把人带到错的方向上。
+       */
+      const note = isQQBot(this.#bot(botId))
+        ? '这是 QQ 官方机器人，历史消息由 QQBot-Plugin (风佬) 提供，当前没读到记录。'
+        + '请确认消息存储设置消息记录开关已开启且存储后端是redis，'
+        : ''
+      return {supported: false, messages: [], hasMore: false, cursor, note}
     }
 
     const num = Math.min(Math.max(Number(count) || HISTORY_COUNT, 1), MAX_HISTORY_COUNT)
@@ -1012,7 +1371,7 @@ export default class ChatService extends Service {
         time: Number(item.time) || 0,
         self: userId === String(botId ?? ''),
         sender: this.#sender(item.sender, userId, botId),
-        segments: await normalizeMsg(item.message ?? item.content, {download: false}),
+        segments: await normalizeMsg(item.message ?? item.content, this.#msgOpts(botId)),
       })
       // 历史接口没有上报原文，只能拿返回的条目本身；已经有实时那份的不覆盖
       if (messageId) {
@@ -1036,6 +1395,115 @@ export default class ChatService extends Service {
       // 顺带把基线游标给前端，省一次请求；从这里开始轮询增量
       cursor,
     }
+  }
+
+  /* ---------------- QQBot：从 Redis 读历史 ---------------- */
+
+  /**
+   * 从 Redis 里读 QQBot 的历史消息。
+   *
+   * 存储后端设成 redis 时，QQBot-Plugin 会把每条消息写进
+   * `wind-msg:*` / `wind-bot-msg:*` 两个 ZSET（键名见 model/qqRedisStore.js）。这里
+   * 把它们取出来、按面板的结构还原，好让消息记录页跟 OneBot 系一样能往上翻历史。
+   *
+   * @return {Promise<{supported: true, messages: object[], hasMore: boolean}|null>}
+   *   null 表示没有可用数据（不是 QQBot、Redis 没接上、或这个会话压根没有记录），
+   *   由调用方回退到「只能看面板运行期间的消息」。
+   */
+  async #historyViaRedis({botId, type, id, seq, count}) {
+    const client = getRedisClient()
+    if (!client) return null
+    // 只对 QQBot 会话走这条路：别的适配器没有这套键，白查一遍还容易误读
+    if (!isQQBot(this.#bot(botId))) return null
+    const keys = qqRedisKeys(type, id)
+    if (!keys.length) return null
+
+    const want = Math.min(Math.max(Number(count) || HISTORY_COUNT, 1), MAX_HISTORY_COUNT)
+    const cursor = decodeRedisCursor(seq)
+    const {items, hasMore} = await readRedisPage(client, keys, cursor, want)
+    // 首屏（没有游标）就一条都没读到 —— 这个会话确实没有记录，交给上层回退
+    if (!items.length && !cursor) return null
+
+    const key = `${botId}:${type === 'group' ? 'group' : 'friend'}:${id}`
+    const messages = []
+    for (const {item, ts, ordinal} of items) {
+      messages.push(await this.#fromRedisItem(item, {
+        botId, type, id, key,
+        // 翻页游标就是这条的「时间戳 + 同秒序号」，前端原样回传
+        messageSeq: encodeRedisCursor(ts, ordinal),
+      }))
+    }
+    // readPage 给的是「新 → 旧」，页面要「旧 → 新」
+    messages.reverse()
+    /**
+     * 补 @ 段昵称，顺手把段里的直链记进代理白名单（rkey 过期时要靠它代拉）。
+     *
+     * `#resolveNames` 是两段式的：缓存里有就直接填，没有就先去适配器要一次成员列表 ——
+     * 也就是说**冷启动那一趟填不上名字，得再走一遍**。实时那条路上 `#onMessage` 与
+     * `#push` 会各跑一次，正好把这两段覆盖掉；这里只有一次机会，所以自己补一趟。
+     */
+    for (const msg of messages) await this.#resolveNames(msg.segments, {botId, type, id})
+    for (const msg of messages) await this.#resolveNames(msg.segments, {botId, type, id})
+
+    return {supported: true, messages, hasMore}
+  }
+
+  /**
+   * 把 Redis 里存的那条 QQBot 记录转成面板的消息结构。
+   *
+   * 字段与 QQBot-Plugin/lib/message.js 写入时一一对应；段数组的形态跟 OneBot 那套一样
+   * （`{type, ...}` 平铺），所以直接交给 normalizeMsg 就行。
+   */
+  async #fromRedisItem(item, {botId, type, id, key, messageSeq}) {
+    const userId = String(item.user_id ?? '')
+    const messageId = item.message_id != null && item.message_id !== '' ? String(item.message_id) : ''
+    const rawSender = item.sender && typeof item.sender === 'object' ? item.sender : {}
+    /**
+     * 群通知（入群 / 退群 / 机器人被拉入踢出）跟普通消息同存一个 ZSET，只有 is_notice
+     * 标记不同。面板没有「通知」这种段，压成一行系统文案当文本发出去。
+     */
+    const segments = item.is_notice
+      ? [{type: 'text', text: noticeText(item)}]
+      : await normalizeMsg(item.message ?? item.content, this.#msgOpts(botId, {
+        botMarkdown: item.is_bot === true && item.me !== true,
+      }))
+
+    const message = {
+      key,
+      botId: String(botId ?? ''),
+      type: type === 'group' ? 'group' : 'friend',
+      id: String(id ?? ''),
+      messageId,
+      eventId: String(item.event_id ?? ''),
+      messageSeq,
+      time: Number(item.timestamp) || 0,
+      /**
+       * 是不是机器人自己发的。
+       *
+       * 不能拿 `userId === botId` 判 —— QQBot 的 user_id 是 `${selfId}:${openid}` 这种
+       * 复合形式，永远等于不了 botId。写入侧对机器人自己的消息打了 `me` 标记，认它。
+       */
+      self: item.me === true,
+      recalled: !!item.recalled,
+      // 昵称 / 头像写入侧单独存了一份，sender 里那份可能缺，这里合并着取
+      sender: this.#sender({
+        ...rawSender,
+        user_id: userId || rawSender.user_id,
+        nickname: item.nickname || rawSender.nickname,
+        avatar: item.avatar || rawSender.avatar,
+      }, userId, botId, item.me === true),
+      segments,
+    }
+    // Redis 里这条就是最原始的一份，留给「查看原始消息」的 msg raw 档
+    if (messageId) {
+      this.#storeRaw(messageId, {
+        array: this.#dump(item.message),
+        raw: this.#dump(item),
+        pbElem: '',
+        pbRaw: '',
+      }, {overwrite: false})
+    }
+    return message
   }
 
   /** 看合并转发的内容。段里只有一个 id，内容在 QQ 服务端 */
@@ -1065,7 +1533,7 @@ export default class ChatService extends Service {
         nickname: String(item.sender?.nickname ?? item.nickname ?? ''),
         userId: String(item.sender?.user_id ?? item.user_id ?? ''),
         time: Number(item.time) || null,
-        segments: await normalizeMsg(content, {download: false}),
+        segments: await normalizeMsg(content, this.#msgOpts(botId)),
       })
     }
     for (const node of nodes) await this.#resolveNames(node.segments, {botId, type, id})
@@ -1128,13 +1596,58 @@ export default class ChatService extends Service {
    *
    * @param text    文本
    * @param images  图片，元素为 dataURL 或 base64（小图兼容用，大图走 files）
-   * @param files   multipart 上传上来的图片，元素为 `{buffer}` 或 `{path}`
+   * @param files   multipart 上传上来的文件，元素为 `{buffer}` 或 `{path}`
    * @param ats     要 @ 的 QQ 号，拼在最前面
-   * @param replyTo 引用哪条消息的 message_id
+   * @param replyTo 引用哪条消息的 message_id（QQ 上显示成一条引用）
+   * @param replyMsgId   被动回复用的 msg_id，见下方 source
+   * @param replyEventId 被动回复用的 event_id，见下方 source
+   * @param kind    消息类型：legacy（普通，默认）/ markdown / ark / media（富媒体）。
+   *                后三种只有 QQ 官方机器人（QQBot-Plugin）认得，面板只在 QQBot 会话下给。
+   * @param ark     kind=ark 时的参数，JSON 字符串 `{template_id, kv}`
    */
-  async send({botId, type, id, text = '', images = [], files = [], ats = [], replyTo = ''} = {}) {
+  async send({
+    botId, type, id, text = '', images = [], files = [], ats = [],
+    replyTo = '', replyMsgId = '', replyEventId = '', kind = 'legacy', ark = '',
+  } = {}) {
     const msg = []
     if (replyTo) msg.push({type: 'reply', id: String(replyTo)})
+    /**
+     * 被动回复。
+     */
+    const source = replyMsgId || replyEventId
+      ? {
+        ...(replyMsgId ? {id: String(replyMsgId)} : {}),
+        ...(replyEventId ? {event_id: String(replyEventId)} : {}),
+      }
+      : null
+
+    /* ---- QQBot 的三种专属类型：段结构跟普通档差得远，单独走 ---- */
+
+    if (kind === 'markdown') {
+      const md = typeof text === 'string' ? text.trim() : ''
+      if (!md) throw new GuobaError('Markdown 内容不能为空')
+      msg.push({type: 'markdown', data: md})
+      return this.#sendMsg({botId, type, id, msg, source})
+    }
+
+    if (kind === 'ark') {
+      msg.push(this.#buildArkSeg(ark))
+      return this.#sendMsg({botId, type, id, msg, source})
+    }
+
+    if (kind === 'media') {
+      const uploads = this.#toArray(files)
+      if (!uploads.length) throw new GuobaError('富媒体要选一个文件')
+      for (const file of uploads.slice(0, MAX_SEND_IMAGES)) {
+        const buffer = await this.#readUpload(file, MAX_SEND_MEDIA_SIZE)
+        if (buffer?.length) msg.push({type: mediaSegType(file), file: buffer})
+      }
+      if (!msg.some((i) => i.type !== 'reply')) throw new GuobaError('没有读到可发送的文件')
+      return this.#sendMsg({botId, type, id, msg, source})
+    }
+
+    /* ---- 普通档 ---- */
+
     for (const item of this.#toArray(this.#parseAts(ats)).slice(0, MAX_SEND_ATS)) {
       // ats 可能是字符串/数字，也可能带 name 的对象（前端 @ 时一起传的）
       const uin = String(item && typeof item === 'object' ? item.qq : item ?? '').trim()
@@ -1167,7 +1680,7 @@ export default class ChatService extends Service {
     if (!msg.some((i) => i.type !== 'reply')) {
       throw new GuobaError('消息内容不能为空')
     }
-    return this.#sendMsg({botId, type, id, msg})
+    return this.#sendMsg({botId, type, id, msg, source})
   }
 
   #toArray(v) {
@@ -1192,19 +1705,45 @@ export default class ChatService extends Service {
   }
 
   /**
+   * Ark 卡片段。
+   */
+  #buildArkSeg(ark) {
+    let parsed
+    try {
+      parsed = typeof ark === 'string' ? JSON.parse(ark) : ark
+    } catch (err) {
+      throw new GuobaError(`Ark 参数不是合法 JSON：${err?.message ?? err}`)
+    }
+    const templateId = Number(parsed?.template_id)
+    if (!Number.isFinite(templateId) || templateId <= 0) {
+      throw new GuobaError('Ark 模板不能为空')
+    }
+    const kv = this.#toArray(parsed?.kv)
+      .map((i) => ({key: String(i?.key ?? '').trim(), value: String(i?.value ?? '').trim()}))
+      .filter((i) => i.key && i.value)
+    if (!kv.length) {
+      throw new GuobaError('Ark 至少要填一个字段')
+    }
+    return {type: 'ark', template_id: templateId, kv}
+  }
+
+  /**
    * 取上传文件的字节。
    *
-   * 锅巴全局挂的 multer 是落盘的（`data/upload_tmp/`），读完就删 —— 图片已经进
+   * 锅巴全局挂的 multer 是落盘的（`data/upload_tmp/`），读完就删 —— 文件已经进
    * 消息段了，临时文件留着只是占地方。
+   *
+   * @param maxSize 这个文件的大小上限，默认按图片算
    */
-  async #readUpload(file) {
+  async #readUpload(file, maxSize = MAX_SEND_IMAGE_SIZE) {
     if (Buffer.isBuffer(file?.buffer)) return file.buffer
     const src = file?.path
     if (!src) return null
     try {
       const buffer = await fs.readFile(src)
-      if (buffer.length > MAX_SEND_IMAGE_SIZE) {
-        throw new GuobaError(`图片过大（单张上限 ${MAX_SEND_IMAGE_SIZE / 1024 / 1024}MB）`)
+      if (buffer.length > maxSize) {
+        const mb = Math.round(maxSize / 1024 / 1024)
+        throw new GuobaError(`文件过大（单个上限 ${mb}MB）`)
       }
       return buffer
     } finally {
@@ -1279,21 +1818,45 @@ export default class ChatService extends Service {
   }
 
   /** 真正发出去，并把自己这条塞进缓冲好让页面上看到 */
-  async #sendMsg({botId, type, id, msg}) {
-    const target = this.#pick(type, id, botId)
-    if (typeof target?.sendMsg !== 'function') {
-      throw new GuobaError(`未找到可用的发送对象：${id}`)
-    }
+  async #sendMsg({botId, type, id, msg, source = null}) {
     let res
-    try {
-      res = await target.sendMsg(msg)
-    } catch (err) {
-      // 适配器原文是给开发者看的（整条 URL + 错误码），翻成人话再抛给面板
-      logger.error(`[Guoba] 面板发送消息失败：${err?.message ?? err}`)
-      throw new GuobaError(describeSendError(err))
+    /**
+     * QQBot 一律自己拼 data 直发，不走 `pickGroup().sendMsg`。
+     */
+    if (isQQBot(this.#bot(botId))) {
+      res = await this.#sendWithSource({botId, type, id, msg, source})
+    } else {
+      const target = this.#pick(type, id, botId)
+      if (typeof target?.sendMsg !== 'function') {
+        throw new GuobaError(`未找到可用的发送对象：${id}`)
+      }
+      try {
+        res = await target.sendMsg(msg)
+      } catch (err) {
+        // 适配器原文是给开发者看的（整条 URL + 错误码），翻成人话再抛给面板
+        logger.error(`[Guoba] 面板发送消息失败：${err?.message ?? err}`)
+        throw new GuobaError(describeSendError(err))
+      }
     }
 
-    const messageId = res?.message_id != null ? String(res.message_id) : ''
+    /**
+     * QQBot-Plugin 的 `sendMsg` **从不抛错**：它把每条的失败收在 `rets.error` 里，
+     * 最后返回 `{message_id: [], data: [], error: [...]}`（见它的 adapter/send.js）。
+     * 不认这个形状的话，面板会把失败当成功 —— 消息根本没出去，界面却本地补了一条回显，
+     * 用户看不出任何异常。这里把这种返回翻成异常。
+     */
+    const botErrors = Array.isArray(res?.error) ? res.error.filter(Boolean) : []
+    if (botErrors.length) {
+      const detail = botErrors.map((e) => e?.message ?? e).join(' | ')
+      logger.error(`[Guoba] 面板发送消息失败：${detail}`)
+      // 多段消息可能只挂了一部分，说清楚免得用户以为全没发出去
+      const partial = Array.isArray(res.message_id) && res.message_id.length ? '（部分消息已发出）' : ''
+      throw new GuobaError(describeSendError(botErrors[0]) + partial)
+    }
+
+    // QQBot 的 message_id 是数组（一次发多段），OneBot 是单值，两种都要认
+    const rawId = Array.isArray(res?.message_id) ? res.message_id[0] : res?.message_id
+    const messageId = rawId != null && rawId !== '' ? String(rawId) : ''
     const self = String(botId ?? '')
     const bot = Bot.bots?.[self]
     /**
@@ -1321,6 +1884,42 @@ export default class ChatService extends Service {
     }, {remember: false})
 
     return {messageId, message: pushed, cursor: this.#seq - 1}
+  }
+
+  /**
+   * 直接调 QQBot 适配器发送（普通发送与被动回复共用这一条）。
+   */
+  async #sendWithSource({botId, type, id, msg, source = null}) {
+    const bot = this.#bot(botId)
+    if (!isQQBot(bot)) {
+      throw new GuobaError('当前适配器不支持被动回复（msg_id / event_id 回复是 QQ 官方机器人专有）')
+    }
+    const group = type === 'group'
+    const send = group ? bot.adapter?.sendGroupMsg : bot.adapter?.sendFriendMsg
+    if (typeof send !== 'function') {
+      throw new GuobaError('当前适配器不支持被动回复')
+    }
+    const data = {
+      self_id: String(botId ?? ''),
+      bot,
+      [group ? 'group_id' : 'user_id']: pureOpenid(id),
+      platform: group ? 'QQ-group' : 'QQ-private',
+      legacy: this.#isLegacyMsg(msg),
+    }
+    try {
+      return await send.call(bot.adapter, data, msg, source ?? undefined)
+    } catch (err) {
+      logger.error(`[Guoba] 面板发送消息失败：${err?.message ?? err}`)
+      throw new GuobaError(describeSendError(err))
+    }
+  }
+
+  /**
+   * 这条消息该不该按「普通文本」发（= QQBot 的 `data.legacy`）。
+   */
+  #isLegacyMsg(msg) {
+    const md = new Set(['markdown', 'ark', 'at'])
+    return !this.#toArray(msg).some((seg) => md.has(seg?.type))
   }
 
   /**
@@ -1386,6 +1985,9 @@ export default class ChatService extends Service {
       const err = item instanceof Error ? item.message : null
       const bad = err ?? (item?.retcode && item.retcode !== 0 ? (item.msg || item.wording) : null)
       if (bad) throw new GuobaError(`撤回失败：${bad}`)
+      if (item === false) {
+        throw new GuobaError('撤回失败：适配器没接受这条撤回（多半是没有权限，或超过了两分钟时限）')
+      }
     }
     const msg = this.#index.get(mid)
     if (msg) {
@@ -1417,6 +2019,407 @@ export default class ChatService extends Service {
       attached: this.#attached,
       maxImages: MAX_SEND_IMAGES,
     }
+  }
+
+  /* ---------------- 群信息 / 置顶 / 拉黑 ---------------- */
+
+  /**
+   * 群信息。
+   *
+   * 两路数据拼起来：
+   * - **面板记录**：适配器连接时给的那份全量群列表（`bot.gl`），随时都在，字段少；
+   * - **适配器现取**：`get_group_info` 系列动作，字段全但慢，还可能失败
+   *   （协议端没这个动作、群号对不上、QQBot 拿不到群详情）。
+   *
+   * 弹窗上「群人数（记录 / 实际）」两栏就是这两路：记录是前者，实际是后者。
+   * 现取失败不报错，如实把原因（liveError）带回去让前端说明 —— 只有记录那一栏也够用。
+   *
+   * @param refresh 跳过现取的缓存，强制问一次适配器（右键「刷新群信息」走这条）
+   */
+  async groupInfo({botId = '', id = '', refresh = false} = {}) {
+    const gid = String(id ?? '').trim()
+    if (!gid) throw new GuobaError('缺少群号')
+    const owner = String(botId ?? '').trim()
+    const bot = this.#bot(owner)
+    const key = sessionKey(owner, 'group', gid)
+    const entry = this.#groupEntry(gid)
+    const qqbot = isQQBot(bot)
+
+    let live = null
+    let liveAt = 0
+    let liveError = ''
+    const hit = this.#groupLiveCache.get(key)
+    if (!refresh && hit && Date.now() - hit.at < GROUP_LIVE_TTL) {
+      live = hit.data
+      liveAt = hit.at
+    } else if (qqbot && typeof this.#qqbotSdk(bot)?.getGroupInfo !== 'function') {
+      // QQ 官方机器人没有 sendApi，它走 SDK；SDK 都没接上就没得现取
+      liveError = '当前 QQ 机器人没接上 SDK，取不到实时的群信息'
+    } else if (!qqbot && typeof bot?.sendApi !== 'function') {
+      liveError = '当前适配器没有 sendApi，取不到实时的群信息'
+    } else {
+      try {
+        live = qqbot
+          ? await this.#fetchQQBotGroupInfo(bot, gid)
+          : await this.#fetchGroupInfo(bot, gid, refresh)
+        liveAt = Date.now()
+        this.#groupLiveCache.set(key, {at: liveAt, data: live})
+        // 名字 / 人数回填进适配器的群缓存，左侧列表跟着一起更新
+        this.#applyGroupInfo(bot, gid, live)
+      } catch (err) {
+        liveError = err?.message ?? String(err)
+      }
+    }
+
+    /**
+     * 面板记录的那份（`bot.gl`）也要按各家键名读。
+     *
+     * QQBot 的 `gl` 里根本没有 `member_count`，它叫 `group_member_num`；
+     * 早先这里写死了 `entry.member_count`，于是 QQBot 的「记录」一栏永远是空。
+     */
+    const recorded = entry && typeof entry === 'object' ? entry : null
+
+    return {
+      key,
+      botId: owner,
+      id: gid,
+      /** 前端拿它区分这是群卡还是用户卡（两张卡共用一份缓存） */
+      type: 'group',
+      name:
+        textOf(live, GROUP_INFO_FIELDS.name) ||
+        textOf(recorded, GROUP_INFO_FIELDS.name) ||
+        gid,
+      avatar: groupAvatarUrl(gid, entry?.avatar),
+      // QQBot 的群 id 是 `${selfId}:${groupOpenid}` 复合形式，面板上单独给一栏看真身
+      openid: pureOpenid(gid),
+      /** 面板记录的群人数（现取不到时这一栏是唯一的参考） */
+      recordedMemberCount: numOf(recorded, GROUP_INFO_FIELDS.memberCount),
+      /** 适配器现取的群人数，取不到是 0 */
+      liveMemberCount: numOf(live, GROUP_INFO_FIELDS.memberCount),
+      maxMemberCount:
+        numOf(live, GROUP_INFO_FIELDS.maxMemberCount) ||
+        numOf(recorded, GROUP_INFO_FIELDS.maxMemberCount),
+      /**
+       * 群备注是**面板自己记的**（右键菜单「备注」里填），不来自适配器 ——
+       * QQBot-Web-Adapter 也是这么做的。OneBot 系顺手把适配器给的群备注当兜底。
+       */
+      remark: getNote(key) || textOf(live, GROUP_INFO_FIELDS.remark),
+      /** 适配器没给现取数据时，退回面板记录那份，别让卡片空着 */
+      intro: textOf(live, GROUP_INFO_FIELDS.intro) || textOf(recorded, GROUP_INFO_FIELDS.intro),
+      category:
+        textOf(live, GROUP_INFO_FIELDS.category) || textOf(recorded, GROUP_INFO_FIELDS.category),
+      /** 群标签，只有 QQ 官方机器人有 */
+      tags: tagsOf(live).length ? tagsOf(live) : tagsOf(recorded),
+      /** 现取失败的原因，空串表示这次拿到的是实时数据 */
+      liveError,
+      /** 现取的时间戳（秒），前端显示「刚刚更新」用 */
+      refreshedAt: liveAt ? Math.floor(liveAt / 1000) : 0,
+      pinned: isPinned(key),
+      blacklisted: isBlacklisted(key),
+    }
+  }
+
+  /** 刷新群信息：数据跟 {@link groupInfo} 完全一样，只是跳过缓存、强制问一次适配器 */
+  async refreshGroupInfo({botId = '', id = ''} = {}) {
+    return this.groupInfo({botId, id, refresh: true})
+  }
+
+  /**
+   * 用户信息：私聊那边点头像弹出的那张卡。
+   *
+   * 结构与 {@link groupInfo} 对称，两路数据：
+   * - **面板记录**：适配器连接时那份好友列表（`bot.fl`）里的一条，随时都在；
+   * - **适配器现取**：OneBot 系的 `get_friend_info` / `get_stranger_info`。
+   *
+   * QQ 官方机器人这边**刻意不现取**：SDK 上根本没有好友信息接口
+   * （它只有 getSelfInfo / getGroupMemberInfo / getGroupBotInfo，见 QQBot-Plugin 的用法），
+   * 注定取不到的东西还每次都报一句「取不到」只是噪音。`fl` 里那份（昵称、openid、
+   * unionid）就是能拿到的全部，卡片上有什么显示什么，`liveError` 留空。
+   */
+  async userInfo({botId = '', id = '', refresh = false} = {}) {
+    const uid = String(id ?? '').trim()
+    if (!uid) throw new GuobaError('缺少用户 id')
+    const owner = String(botId ?? '').trim()
+    const bot = this.#bot(owner)
+    const key = sessionKey(owner, 'friend', uid)
+    const entry = this.#friendEntry(uid)
+    const qqbot = isQQBot(bot)
+
+    let live = null
+    let liveAt = 0
+    let liveError = ''
+    if (!qqbot) {
+      const hit = this.#userLiveCache.get(key)
+      if (!refresh && hit && Date.now() - hit.at < USER_LIVE_TTL) {
+        live = hit.data
+        liveAt = hit.at
+      } else if (typeof bot?.sendApi !== 'function') {
+        liveError = '当前适配器没有 sendApi，取不到实时的用户信息'
+      } else {
+        try {
+          live = await this.#fetchUserInfo(bot, uid, refresh)
+          liveAt = Date.now()
+          this.#userLiveCache.set(key, {at: liveAt, data: live})
+          this.#applyUserInfo(bot, uid, live)
+        } catch (err) {
+          liveError = err?.message ?? String(err)
+        }
+      }
+    }
+
+    const recorded = entry
+    return {
+      key,
+      botId: owner,
+      id: uid,
+      /** 前端拿它区分这是群卡还是用户卡（两张卡共用一份缓存） */
+      type: 'friend',
+      name: textOf(live, USER_INFO_FIELDS.name) || textOf(recorded, USER_INFO_FIELDS.name) || uid,
+      avatar: userAvatarUrl(uid, owner, recorded?.avatar ?? live?.avatar),
+      /**
+       * QQBot 的好友 id 是 `${selfId}:${openid}` 复合形式，跟群一样，剥前缀拿真身；
+       * `fl` 里已经存了 `openid` 的话优先用它（那是适配器从事件里带下来的原值）。
+       */
+      openid: textOf(recorded, USER_INFO_FIELDS.openid) || (qqbot ? pureOpenid(uid) : ''),
+      unionid: textOf(live, USER_INFO_FIELDS.unionid) || textOf(recorded, USER_INFO_FIELDS.unionid),
+      /** 适配器给的好友备注（跟群备注不是一回事：这个来自 QQ，不是面板自己填的） */
+      remark: textOf(live, USER_INFO_FIELDS.remark) || textOf(recorded, USER_INFO_FIELDS.remark),
+      liveError,
+      refreshedAt: liveAt ? Math.floor(liveAt / 1000) : 0,
+      pinned: isPinned(key),
+      blacklisted: isBlacklisted(key),
+      /** 前端据此把「账号」那一栏的标签在 openid / QQ 之间切 */
+      qqbot,
+    }
+  }
+
+  /** 刷新用户信息：数据跟 {@link userInfo} 一样，只是跳过缓存 */
+  async refreshUserInfo({botId = '', id = ''} = {}) {
+    return this.userInfo({botId, id, refresh: true})
+  }
+
+  /** 面板记录的那份好友信息（`bot.fl` 里的一条） */
+  #friendEntry(uid) {
+    const map = Bot.getFriendMap?.()
+    if (!(map instanceof Map)) return null
+    // 键可能是数字（OneBot 的 QQ 号）也可能是字符串（QQBot 的复合 id），两边都试一下
+    const entry = map.get(Number(uid) || uid) ?? map.get(String(uid))
+    return entry && typeof entry === 'object' ? entry : null
+  }
+
+  /** 问一次适配器要好友信息，动作名逐个试 */
+  async #fetchUserInfo(bot, uid, refresh) {
+    const params = {user_id: Number(uid) || uid}
+    // no_cache 是 NapCat 的扩展，别家不认也会忽略。只在显式刷新时带上
+    if (refresh) params.no_cache = true
+    const tried = []
+    for (const action of USER_INFO_ACTIONS) {
+      let res
+      try {
+        res = await bot.sendApi(action, params)
+      } catch (err) {
+        tried.push(`${action}: ${err?.message ?? err}`)
+        continue
+      }
+      const data = res?.data ?? res
+      if (!data || typeof data !== 'object') {
+        tried.push(`${action}: 返回 ${typeof data}`)
+        continue
+      }
+      // 个别实现把错误塞在返回里而不是抛错
+      const code = data.retcode
+      if (code != null && code !== 0 && code !== 1) {
+        tried.push(`${action}: retcode=${code}`)
+        continue
+      }
+      return data
+    }
+    throw new GuobaError(`取不到用户信息（${tried.join('；')}）`)
+  }
+
+  /**
+   * 把现取的好友信息回填进适配器的好友缓存。
+   *
+   * 会话列表的名字与头像都从 `bot.fl` 读（见 {@link listSessions}），不回填的话
+   * 卡片上是新昵称、左边列表还是旧的。
+   */
+  #applyUserInfo(bot, uid, data) {
+    const map = bot?.fl
+    if (!(map instanceof Map)) return
+    const entry = map.get(Number(uid) || uid) ?? map.get(String(uid))
+    if (!entry || typeof entry !== 'object') return
+    const name = textOf(data, USER_INFO_FIELDS.name)
+    const remark = textOf(data, USER_INFO_FIELDS.remark)
+    const avatar = textOf(data, ['avatar', 'avatar_url', 'avatarUrl'])
+    if (name) entry.nickname = name
+    if (remark) entry.remark = remark
+    if (avatar) entry.avatar = avatar
+  }
+
+  /**
+   * 置顶 / 取消置顶。
+   *
+   * 纯面板状态，不动适配器，所以同步返回。`saved` 为 false 表示内存里已经改了、
+   * 但没写进磁盘（重启会丢），前端可以提示一句。
+   */
+  setPin({botId = '', type = 'group', id = '', pinned = true} = {}) {
+    const sid = String(id ?? '').trim()
+    if (!sid) throw new GuobaError('缺少会话 id')
+    const key = sessionKey(botId, type, sid)
+    return {key, pinned: !!pinned, saved: setPinned(key, pinned)}
+  }
+
+  /**
+   * 设置 / 清除群备注。
+   *
+   * 备注是**用户自己给群起的名字**，不来自任何适配器 —— 所以这里只写面板那份 JSON，
+   * 不动适配器。传空串就是清除。返回清好的文本，前端直接拿来回显。
+   */
+  setGroupNote({botId = '', id = '', note = ''} = {}) {
+    const sid = String(id ?? '').trim()
+    if (!sid) throw new GuobaError('缺少群号')
+    const key = sessionKey(botId, 'group', sid)
+    const saved = setNote(key, note)
+    return {key, note: getNote(key), saved}
+  }
+
+  /**
+   * 拉黑 / 取消拉黑。
+   *
+   * 分两层：
+   * 1. 锅巴面板自己记一份（model/chatPrefs.js）—— 列表上的标记与排序靠它，任何适配器都有；
+   * 2. QQ 官方机器人再顺手同步给 QQBot-Plugin 的黑名单（model/qqbotBlacklist.js），
+   *    那份才是真正决定机器人理不理这个群的名单，QQBot-Web-Adapter 也是这么接的。
+   *
+   * 其余适配器锅巴这边没有统一的黑名单接口，只做第 1 层，并在 note 里说清楚 ——
+   * 悄悄「拉黑」了却没有任何效果，比说一句实话难查得多。
+   */
+  async setBlacklist({botId = '', type = 'group', id = '', blacklisted = true} = {}) {
+    const sid = String(id ?? '').trim()
+    if (!sid) throw new GuobaError('缺少会话 id')
+    const key = sessionKey(botId, type, sid)
+    const saved = setBlacklisted(key, blacklisted)
+
+    let mirrored = false
+    let note = ''
+    if (type === 'friend') {
+      note = '私聊拉黑只记在锅巴面板里，机器人那边不受影响'
+    } else if (isQQBot(this.#bot(botId))) {
+      const res = await mirrorGroupBlacklist(sid, blacklisted)
+      mirrored = res.ok
+      note = res.note
+    } else {
+      note = '当前适配器没有黑名单接口，只在锅巴面板里标记'
+    }
+    return {key, blacklisted: !!blacklisted, saved, mirrored, note}
+  }
+
+  /** 面板记录的那份群信息（`bot.gl` 里的一条） */
+  #groupEntry(gid) {
+    const map = Bot.getGroupMap?.()
+    if (!(map instanceof Map)) return null
+    const entry = map.get(Number(gid) || gid)
+    return entry && typeof entry === 'object' ? entry : null
+  }
+
+  /**
+   * QQ 官方机器人的 SDK。
+   *
+   * QQBot-Plugin 把它挂在 `Bot[uin].sdk` 上（见它的 adapter/connect.js），
+   * QQBot-Web-Adapter 也是这么取的：`Bot[selfId]?.sdk || Bot[selfId]`。
+   * 后半个兜底是给别的 fork 留的 —— 有的直接把方法摊在 bot 上。
+   */
+  #qqbotSdk(bot) {
+    return bot?.sdk ?? bot ?? null
+  }
+
+  /**
+   * 问 QQ 官方机器人要群信息。
+   *
+   * 跟 OneBot 系完全不是一回事：那边是 `sendApi('get_group_info')`，这边是 SDK 上的
+   * `getGroupInfo(纯 openid)`（走 `/v2/groups/{id}/info`）。QQBot-Web-Adapter 用的就是它，
+   * 群人数 / 群简介 / 群分类 全在这一份里 —— 这正是「QQBot 下单独处理」的原因。
+   *
+   * 群 id 得先剥掉 `${selfId}:` 前缀，SDK 只认纯 openid。
+   */
+  async #fetchQQBotGroupInfo(bot, gid) {
+    const sdk = this.#qqbotSdk(bot)
+    if (typeof sdk?.getGroupInfo !== 'function') {
+      throw new GuobaError('当前 QQ 机器人没接上 SDK，取不到实时的群信息')
+    }
+    const pure = pureOpenid(gid)
+    if (!pure) throw new GuobaError('这个群的 openid 是空的，取不到实时的群信息')
+    try {
+      const data = await sdk.getGroupInfo(pure)
+      if (!data || typeof data !== 'object') {
+        throw new GuobaError('QQ 那边没回群信息')
+      }
+      return data
+    } catch (err) {
+      throw new GuobaError(describeQQBotGroupError(err))
+    }
+  }
+
+  /** 问一次适配器要群信息，动作名逐个试 */
+  async #fetchGroupInfo(bot, gid, refresh) {
+    const params = {group_id: Number(gid) || gid}
+    // no_cache 是 NapCat 的扩展，别家不认也会忽略。只在用户显式刷新时带上，
+    // 免得开一次弹窗就绕过协议端自己的缓存
+    if (refresh) params.no_cache = true
+    const tried = []
+    for (const action of GROUP_INFO_ACTIONS) {
+      let res
+      try {
+        res = await bot.sendApi(action, params)
+      } catch (err) {
+        tried.push(`${action}: ${err?.message ?? err}`)
+        continue
+      }
+      // sendApi 回来的是个 Proxy，data 里的字段直接取得到（同 get_msg 那两处）
+      const data = res?.data ?? res
+      if (!data || typeof data !== 'object') {
+        tried.push(`${action}: 返回 ${typeof data}`)
+        continue
+      }
+      // 个别实现把错误塞在返回里而不是抛错
+      const code = data.retcode
+      if (code != null && code !== 0 && code !== 1) {
+        tried.push(`${action}: retcode=${code}`)
+        continue
+      }
+      return data
+    }
+    throw new GuobaError(`取不到群信息（${tried.join('；')}）`)
+  }
+
+  /**
+   * 把现取的群信息回填进适配器的群缓存。
+   *
+   * 会话列表的名字与人数都从 `bot.gl` 读（见 {@link listSessions}），不写回去的话
+   * 「刷新群信息」就只刷新了弹窗、左侧列表纹丝不动。
+   */
+  #applyGroupInfo(bot, gid, data) {
+    const map = bot?.gl
+    if (!(map instanceof Map)) return
+    const entry = map.get(Number(gid) || gid)
+    if (!entry || typeof entry !== 'object') return
+    const name = textOf(data, GROUP_INFO_FIELDS.name)
+    const memberCount = numOf(data, GROUP_INFO_FIELDS.memberCount)
+    const maxMemberCount = numOf(data, GROUP_INFO_FIELDS.maxMemberCount)
+    const remark = textOf(data, GROUP_INFO_FIELDS.remark)
+    const intro = textOf(data, GROUP_INFO_FIELDS.intro)
+    const category = textOf(data, GROUP_INFO_FIELDS.category)
+    const tags = tagsOf(data)
+    if (name) entry.group_name = name
+    if (memberCount) entry.member_count = memberCount
+    if (maxMemberCount) entry.max_member_count = maxMemberCount
+    if (remark) entry.group_remark = remark
+    // QQBot-Plugin 自己那套键名也写一遍：它下次启动时从 gl 读的就是这几个，
+    // 只写 member_count 的话，面板刷新完过一阵又变回旧值（见它的 setGroupMap）
+    if (memberCount) entry.group_member_num = memberCount
+    if (intro) entry.group_finger_memo = intro
+    if (category) entry.group_class_text = category
+    if (tags.length) entry.group_tags = tags
   }
 
   /**

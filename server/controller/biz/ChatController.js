@@ -27,6 +27,12 @@ export class ChatController extends ApiController {
     this.post('/poke', this.poke)
     this.post('/read', this.read)
     this.post('/forward', this.forward)
+    this.get('/group-info', this.groupInfo)
+    this.get('/user-info', this.userInfo)
+    this.post('/refresh-group', this.refreshGroup)
+    this.post('/pin', this.pin)
+    this.post('/blacklist', this.blacklist)
+    this.post('/note', this.note)
     // 下面两个要能直接写进 <img src>，token 走 query（TokenInterceptor 支持）
     this.get('/asset/:id', this.getAsset)
     this.get('/proxy', this.proxy)
@@ -61,11 +67,11 @@ export class ChatController extends ApiController {
     return Result.ok(await this.chatService.getRaw({botId, type, id, messageId}))
   }
 
-  /** 发消息，会真的发到 QQ 上。图片走 multipart（锅巴全局挂的 multer 已把文件放进 req.files） */
+  /** 发消息，会真的发到 QQ 上。文件走 multipart（锅巴全局挂的 multer 已把文件放进 req.files） */
   async send(req) {
-    const {botId, type, id, text, images, replyTo, ats} = req.body ?? {}
+    const {botId, type, id, text, images, replyTo, replyMsgId, replyEventId, ats, kind, ark} = req.body ?? {}
     return Result.ok(await this.chatService.send({
-      botId, type, id, text, images, replyTo, ats,
+      botId, type, id, text, images, replyTo, replyMsgId, replyEventId, ats, kind, ark,
       files: req.files,
     }))
   }
@@ -104,6 +110,52 @@ export class ChatController extends ApiController {
   async forward(req) {
     const {botId, type, id, messageId} = req.body ?? {}
     return Result.ok(await this.chatService.getForward({botId, type, id, messageId}))
+  }
+
+  /** 群信息：面板记录 + 适配器现取，见 ChatService.groupInfo */
+  async groupInfo(req) {
+    const {botId, id, refresh} = req.query ?? {}
+    return Result.ok(await this.chatService.groupInfo({
+      botId, id, refresh: refresh === '1' || refresh === 'true',
+    }))
+  }
+
+  /** 刷新群信息：跟 /group-info 同一份数据，只是强制问一次适配器 */
+  async refreshGroup(req) {
+    const {botId, id} = req.body ?? {}
+    return Result.ok(await this.chatService.refreshGroupInfo({botId, id}))
+  }
+
+  /** 用户信息：私聊点头像弹的那张卡，见 ChatService.userInfo */
+  async userInfo(req) {
+    const {botId, id, refresh} = req.query ?? {}
+    return Result.ok(await this.chatService.userInfo({
+      botId, id, refresh: refresh === '1' || refresh === 'true',
+    }))
+  }
+
+  /** 置顶 / 取消置顶（纯面板状态） */
+  async pin(req) {
+    const {botId, type, id, pinned} = req.body ?? {}
+    return Result.ok(this.chatService.setPin({botId, type, id, pinned: pinned !== false}))
+  }
+
+  /** 拉黑 / 取消拉黑群聊 */
+  async blacklist(req) {
+    const {botId, type, id, blacklisted} = req.body ?? {}
+    return Result.ok(await this.chatService.setBlacklist({
+      botId, type, id, blacklisted: blacklisted !== false,
+    }))
+  }
+
+  /**
+   * 设置 / 清除群备注（纯面板状态，用户自己给群起的名字）。
+   *
+   * 传空串就是清除 —— 所以这里**不能**用 `note || ''` 之外的兜底逻辑把空值吞掉。
+   */
+  async note(req) {
+    const {botId, id, note} = req.body ?? {}
+    return Result.ok(this.chatService.setGroupNote({botId, id, note}))
   }
 
   /** 回传自己发出去的那张图 */

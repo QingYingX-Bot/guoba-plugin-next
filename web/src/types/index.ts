@@ -33,6 +33,14 @@ export interface FormSchema {
   defaultValue?: any
   /** 占据的栅格数（部分插件会传） */
   colProps?: Record<string, any>
+  /**
+   * 强制 / 取消「整行竖排」。
+   *
+   * 默认由组件名决定（`BLOCK_COMPONENTS` 里的走整行：label 在上、控件占满）。
+   * 写 `false` 可以让某个字段走常规的「标签左、控件右」—— label 短的时候这样
+   * 反而和上下其它字段对得齐。
+   */
+  block?: boolean
   /** 分组标题（SOFT_GROUP_BEGIN 用 label 表示组名） */
   [key: string]: any
 }

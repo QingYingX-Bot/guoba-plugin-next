@@ -36,7 +36,7 @@ function apiBaseOf(p: CustomPage) {
 /**
  * iframe 的地址。
  *
- * `__webBase` / `__apiBase` 供页面里的 JS 拼接接口地址，与 QQBot-Web-Adapter 的约定一致；
+ * `__webBase` / `__apiBase` 供页面里的 JS 拼接接口地址
  * token 走 query，iframe 内相对引用的 css/js 则靠下面种的 Cookie 过鉴权。
  */
 const frameSrc = computed(() => {

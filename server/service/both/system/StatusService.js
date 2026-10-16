@@ -2,11 +2,38 @@ import os from 'os'
 import moment from 'moment'
 import {Service} from '#guoba.framework'
 import {diskInfo} from '#guoba.libs'
-import {collect as collectHardware, warmup as warmupHardware} from './hardware.js'
+import {collect as collectHardware, warmup as warmupHardware, warmupDynamic} from './hardware.js'
 import {isFakeAccount} from '../../../../utils/account.js'
 
 /** 采样两次 /proc 计算 CPU 占用的间隔 */
 const CPU_SAMPLE_INTERVAL = 200
+
+/**
+ * 硬件指标的后台刷新间隔 / 首次请求的最长等待。
+ *
+ * 采集要起 PowerShell（Windows）、读系统接口，还可能「卡住不返回」—— 绝不能放在请求路径上：
+ * 首页每 5 秒轮询一次，一旦卡住整块面板就点不动了。这里固定节奏在后台采，
+ * 请求只读最近一次的快照（最多旧一个周期）。首次打开面板时快照可能还没好，
+ * 最多等 HW_FIRST_WAIT 就退回 `os` 的基础数据，少几项但页面照常出。
+ */
+const HW_REFRESH_INTERVAL = 10 * 1000
+const HW_FIRST_WAIT = 1200
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`采集超时（${ms}ms）`)), ms)
+    Promise.resolve(promise).then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
 
 /**
  * 只统计真实磁盘，过滤内存盘和容器叠加层，
@@ -29,6 +56,41 @@ export class StatusService extends Service {
     super(app)
     // 预热硬件静态信息（CPU 型号、内存条频率），别让第一次打开首页等在这儿
     warmupHardware().catch(() => {})
+    // 显卡占用 / CPU 温度在 Windows 上很贵（几条 PowerShell），一并预热，
+    // 这样第一次打开的首页命中的是缓存，而不是现起一堆系统命令
+    warmupDynamic()
+    this.#startHwRefresh()
+  }
+
+  /** 上一次采到的硬件快照；请求只读它，永远不等采集 */
+  #hwSnapshot = null
+  /** 后台采集是否正在进行，避免上一轮没回来又叠一轮 */
+  #hwRefreshing = false
+  #hwTimer = null
+
+  /**
+   * 后台按固定节奏刷新硬件快照。
+   *
+   * 把采集彻底挪出请求路径 —— 慢也好、卡也好，最多影响快照的新鲜度，
+   * 不会让首页那几个轮询请求排队等在那儿。
+   */
+  #startHwRefresh() {
+    const tick = () => {
+      if (this.#hwRefreshing) return
+      this.#hwRefreshing = true
+      collectHardware()
+        .then((v) => {
+          this.#hwSnapshot = v
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.#hwRefreshing = false
+        })
+    }
+    tick()
+    this.#hwTimer = setInterval(tick, HW_REFRESH_INTERVAL)
+    // 别因为这个定时器拖住进程退出
+    this.#hwTimer.unref?.()
   }
 
   /** 上次为磁盘失败打日志的时刻，见 {@link DISK_WARN_INTERVAL} */
@@ -117,7 +179,9 @@ export class StatusService extends Service {
     // Windows 上 loadavg 恒为 [0,0,0]，前端据此隐藏该项
     const [load1, load5, load15] = os.loadavg()
 
-    const hw = await collectHardware().catch(() => null)
+    // 硬件快照由后台定时刷新，这里直接读。首屏可能还没采完，最多等一小会儿；
+    // 等不到就用 `os` 的基础数据（少几项但页面照常出），绝不把请求挂在采集上。
+    const hw = this.#hwSnapshot ?? await withTimeout(collectHardware(), HW_FIRST_WAIT).catch(() => null)
 
     // CPU 占用：si 没给就自己采样两次算
     const cpuPercent = typeof hw?.cpu?.percent === 'number'

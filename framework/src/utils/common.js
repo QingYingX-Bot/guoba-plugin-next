@@ -14,8 +14,11 @@ export async function loadClasses(rootPath, clazz, classes = {}) {
     file => /\.c?js$/.test(file),
     files => files.includes('.ignored_loader')
   );
-  for (let filePath of files) {
-    const tempClasses = await loadClass(filePath, clazz);
+  // 并行 import
+  // 每个文件都自己解析依赖（GI/GID），文件之间没有先后要求；Promise.all 保持结果顺序，
+  // 所以 Object.assign 的合并顺序和原来一致。loadClass 内部已经 catch，不会让整批失败。
+  const loaded = await Promise.all(files.map(filePath => loadClass(filePath, clazz)));
+  for (const tempClasses of loaded) {
     Object.assign(classes, tempClasses);
   }
   return classes

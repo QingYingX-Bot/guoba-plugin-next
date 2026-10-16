@@ -7,7 +7,7 @@ const {GI, GID} = Guoba.createImport(import.meta.url)
 // 引入模块
 const IConfigService = await GID('#/service/interface/IConfigService.js')
 const {getConfigReader} = await GI('./utils/ConfigUtils.js')
-const {getConfigTabs, configFile} = await GI('./model/useConfig.js')
+const {getConfigTabs, configFile, normalizeConfigData} = await GI('./model/useConfig.js')
 
 const CfgUtilsAdapter = await (async () => {
   if (isTRSS) {
@@ -31,7 +31,7 @@ export default class ConfigServiceImpl extends IConfigService {
     if (Array.isArray(jsonData)) {
       return jsonData
     }
-    return this.handleConfigData('get', key, jsonData)
+    return normalizeConfigData('get', key, this.handleConfigData('get', key, jsonData))
   }
 
   async setConfigData(key, data) {

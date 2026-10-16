@@ -24,7 +24,7 @@ export interface AvatarOptions {
   adapter?: string
 }
 
-/** 适配器名里带 qqbot 就按官方机器人算（QQBot、QQBot-Web-Adapter 等都算） */
+/** 适配器名里带 qqbot 就按官方机器人算 */
 export function isQQBot(adapter?: string) {
   return /qqbot/i.test(String(adapter ?? ''))
 }

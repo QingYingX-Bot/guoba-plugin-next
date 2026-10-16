@@ -132,7 +132,7 @@ onMounted(loadStatus)
         show-icon
         class="g-login-alert"
         message="尚未设置登录账号"
-        description="点击「获取令牌」，机器人会把登录令牌私聊发给主人，输入令牌进入面板后请尽快设置用户名和密码。"
+        description="点「获取令牌」，令牌会私聊发给主人。进来后尽快设置用户名和密码。"
       />
 
       <form v-if="!configured" class="g-login-form" @submit.prevent="submitToken">

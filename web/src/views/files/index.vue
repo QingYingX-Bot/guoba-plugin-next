@@ -338,7 +338,7 @@ function triggerDownload(url: string) {
 function downloadCurrent() {
   Modal.confirm({
     title: `打包下载「${currentPath.value || 'Yunzai 根目录'}」？`,
-    content: '会把这个目录下的所有文件打成一个 zip 边打边传，目录很大时要传很久，浏览器里可以随时取消。',
+    content: '把目录打成 zip 边打边传，大目录要传很久，可随时取消。',
     okText: '开始下载',
     cancelText: '取消',
     onOk() {

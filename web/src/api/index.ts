@@ -14,6 +14,7 @@ import type {
   PluginItem,
   SystemStatus,
 } from '@/types'
+import { StringifyOptions } from 'node:querystring'
 
 /* ---------------- 登录 / 用户 ---------------- */
 
@@ -312,6 +313,9 @@ export const apiQueryFriendList = (params: PageQuery) =>
 export const apiQueryGroupList = (params: PageQuery) =>
   get<any>('/oicq/group/list', params)
 
+/** 在线账号，账号管理页按它过滤好友 / 群列表（字段同沙盒的 SandboxBot） */
+export const apiQueryBots = () => get<SandboxBot[]>('/oicq/bots')
+
 export const apiPickUser = (qq: string | number) => get<any>('/oicq/pick/user', { qq })
 
 export const apiPickGroup = (groupId: string | number) =>
@@ -565,11 +569,36 @@ export interface RedisValue {
   truncated: boolean
 }
 
-export const apiRedisInfo = () =>
-  get<{ dbSize: number; memory: string }>('/data/redis/info', undefined, { showError: false })
+export interface RedisInfo {
+  dbSize: number
+  memory: string
+}
 
-export const apiRedisScan = (params: { cursor?: number; match?: string; count?: number }) =>
-  get<RedisScanResult>('/data/redis/scan', params)
+/**
+ * key 的「顶层」：第一个 `:` 之前那一段（整条 key 没有 `:` 就是它自己）。
+ * 面板「加载全部」时按它勾选要加载哪几层。
+ */
+export interface RedisNamespace {
+  name: string
+  count: number
+  /** 是不是 QQBot-Plugin 的消息记录（wind-msg:* 等，一条消息一个 key 的那种） */
+  message: boolean
+}
+
+export const apiRedisInfo = () =>
+  get<RedisInfo>('/data/redis/info', undefined, { showError: false })
+
+/** 当前匹配到的 key 分布在哪些顶层下，各多少条。只回聚合，不带 key 本体 */
+export const apiRedisNamespaces = (match: string) =>
+  get<RedisNamespace[]>('/data/redis/namespaces', { match })
+
+export const apiRedisScan = (params: {
+  cursor?: number
+  match?: string
+  count?: number
+  /** 不加载哪些顶层，逗号分隔，见 RedisNamespace.name */
+  exclude?: string
+}) => get<RedisScanResult>('/data/redis/scan', params)
 
 export const apiRedisGet = (key: string) => get<RedisValue>('/data/redis/get', { key })
 
@@ -738,6 +767,8 @@ export interface SandboxSegment {
   rows?: SandboxButton[][]
   /** markdown 段的正文 */
   content?: string
+  /** markdown 原生模板：正文在 QQ 服务端，本地只有模板 id 与参数，还原不出来 */
+  template?: boolean
   /** 当前模拟的平台不渲染这个段（按钮/markdown 发到 OneBot 那边就是被丢掉的） */
   ignored?: boolean
   /** 无法还原的段的原始 JSON */
@@ -850,6 +881,50 @@ export type MsgBtn = SandboxButton
 
 export type ChatType = 'friend' | 'group'
 
+/**
+ * 输入区的档位。normal / raw 是所有适配器都有的，markdown / ark / media
+ * 只有 QQ 官方机器人（QQBot-Plugin）认
+ */
+export type ChatSendMode = 'normal' | 'raw' | 'markdown' | 'ark' | 'media'
+
+/**
+ * 引用 / 回复的三种口径，对应后端 `send()` 的 replyTo / replyMsgId / replyEventId。
+ *
+ * - quote   落到 `message_reference`，QQ 上显示成一条引用，所有适配器都有
+ * - msgId   官方机器人的「被动回复」（消息体上带 msg_id），只有 QQBot 有
+ * - eventId 同上，带的是 event_id
+ */
+export type ChatReplyMode = 'quote' | 'msgId' | 'eventId'
+
+/** 面板上「这条要回复谁」的状态，name / text 只用来显示 */
+export interface ChatReplyTarget {
+  mode: ChatReplyMode
+  /** quote / msgId 是 message_id，eventId 是 event_id */
+  id: string
+  name: string
+  text: string
+}
+
+/**
+ * 输入区交上来的发送参数，页面按 mode 分派：
+ * raw 走 /chat/send-raw，其余走 /chat/send 的 multipart（mode 转成后端的 kind）。
+ */
+export interface ChatSendPayload {
+  mode: ChatSendMode
+  /** normal / markdown 的正文 */
+  text: string
+  /** raw 档的段数组 JSON */
+  raw: string
+  images: File[]
+  ats: Array<{ qq: string; name: string }>
+  /** ark 档的 `{template_id, kv}` JSON */
+  ark: string
+  /** media 档选中的文件 */
+  files: File[]
+  /** QQBot 的「msg_id 回复」勾选状态 */
+  useMsgIdReply: boolean
+}
+
 /** 活跃摘要：会话 key -> 最后一条 + 未读 */
 export interface ChatActiveItem {
   /** 秒 */
@@ -864,8 +939,14 @@ export interface ChatSession extends ChatActiveItem {
   type: ChatType
   id: string
   name: string
+  /** 群备注（用户自己起的别名，见后端 model/chatPrefs.js）。列表显示时优先用它 */
+  note?: string
   /** 后端按适配器算好的头像地址，拼不出来时是空串 */
   avatar?: string
+  /** 置顶（面板自己的状态，见后端 model/chatPrefs.js），置顶的排最前 */
+  pinned?: boolean
+  /** 已被拉黑，列表上给个标记 */
+  blacklisted?: boolean
 }
 
 export interface ChatMsg {
@@ -876,6 +957,11 @@ export interface ChatMsg {
   type: ChatType
   id: string
   messageId: string
+  /**
+   * QQBot 事件 id，被动回复（右键「使用本消息 event_id 回复」）要用。
+   * 别的适配器没有这个概念，是空串。
+   */
+  eventId: string
   /** 向上翻页的游标 */
   messageSeq: string
   /** 秒 */
@@ -891,6 +977,10 @@ export interface ChatMsg {
     title: string
     /** 后端按适配器算好的头像地址，拼不出来时是空串 */
     avatar?: string
+    /** QQBot 才有：不带 `${selfId}:` 前缀的裸 openid */
+    openid?: string
+    /** QQBot 才有 */
+    unionid?: string
   }
   segments: MsgSeg[]
   /** 在面板里撤回过 */
@@ -938,6 +1028,89 @@ export const apiChatSessions = (params: {
     rev: number
     sessions: Record<string, ChatActiveItem>
   }>('/chat/sessions', params)
+
+/**
+ * 群信息。
+ */
+export interface ChatGroupInfo {
+  key: string
+  botId: string
+  id: string
+  type: 'group'
+  name: string
+  avatar: StringifyOptions
+  openid: string
+  recordedMemberCount: number
+  liveMemberCount: number
+  maxMemberCount: number
+  remark: string
+  intro: string
+  category: string
+  tags: string[]
+  liveError: string
+  refreshedAt: number
+  pinned: boolean
+  blacklisted: boolean
+}
+
+/**
+ * 用户信息（私聊）
+ */
+export interface ChatUserInfo {
+  key: string
+  botId: string
+  id: string
+  type: 'friend'
+  name: string
+  avatar: string
+  openid: string
+  unionid: string
+  remark: string
+  liveError: string
+  refreshedAt: number
+  pinned: boolean
+  blacklisted: boolean
+  qqbot: boolean
+}
+
+export const apiChatGroupInfo = (params: { botId: string; id: string }) =>
+  get<ChatGroupInfo>('/chat/group-info', params, { showError: false })
+
+export const apiChatUserInfo = (params: { botId: string; id: string }) =>
+  get<ChatUserInfo>('/chat/user-info', params, { showError: false })
+
+/** 刷新群信息：跳过缓存强制问一次适配器，返回的是同一份结构 */
+export const apiChatRefreshGroup = (body: { botId: string; id: string }) =>
+  post<ChatGroupInfo>('/chat/refresh-group', body)
+
+/**
+ * 设置 / 清除群备注。传空串即清除。
+ */
+export const apiChatNote = (body: { botId: string; id: string; note: string }) =>
+  post<{ key: string; note: string; saved: boolean }>('/chat/note', body)
+
+/** 置顶 / 取消置顶。saved 为 false 表示没写进磁盘，重启会丢 */
+export const apiChatPin = (body: {
+  botId: string
+  type: ChatType
+  id: string
+  pinned: boolean
+}) => post<{ key: string; pinned: boolean; saved: boolean }>('/chat/pin', body)
+
+/** 拉黑 / 取消拉黑。note 是「同步到机器人那边」这一步的结果，空串表示不用提示 */
+export const apiChatBlacklist = (body: {
+  botId: string
+  type: ChatType
+  id: string
+  blacklisted: boolean
+}) =>
+  post<{
+    key: string
+    blacklisted: boolean
+    saved: boolean
+    mirrored: boolean
+    note: string
+  }>('/chat/blacklist', body)
 
 /** 拉历史消息。seq 为向上翻页的游标，0 取最新 */
 export const apiChatHistory = (params: {

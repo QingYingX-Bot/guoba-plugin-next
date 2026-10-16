@@ -199,11 +199,11 @@ function confirmStart() {
     content: () => [
       `将写入 ${picked.value.length} 个条目`
       + (pickedPlugins.value.length ? `，并安装 ${pickedPlugins.value.length} 个插件。` : '。'),
-      '同名文件会被覆盖，覆盖前原文件会挪到 data/guoba/backups/.restore-bak-<时间戳>/。',
+      '同名文件覆盖前会先备份。',
       Object.values(cloneRemotes.value).filter(Boolean).length
-        ? `其中 ${Object.values(cloneRemotes.value).filter(Boolean).length} 个插件手动指定了仓库来源，失败后不会自动换源。`
+        ? `其中 ${Object.values(cloneRemotes.value).filter(Boolean).length} 个插件指定了仓库来源，失败后不换源。`
         : '',
-      autoNpmInstall.value ? '之后会逐插件安全安装依赖，最后在 Yunzai 根执行 pnpm install，可能需要几分钟。' : '',
+      autoNpmInstall.value ? '之后逐个装依赖，可能要几分钟。' : '',
       autoRestart.value ? '完成后会重启 Bot，机器人会短暂离线。' : '部分配置需要手动重启 Bot 才生效。',
     ].filter(Boolean).join(' '),
     okText: '开始还原',
@@ -399,7 +399,7 @@ onMounted(async () => {
           type="warning"
           show-icon
           class="g-bk-alert"
-          :message="`${willPending.join('、')} 没装也没勾选安装，它们的文件会暂存到 .pending-restore/ 而不会写进插件目录`"
+          :message="`${willPending.join('、')} 没装也没勾选安装，文件会暂存到 .pending-restore/，不写进插件目录`"
         />
 
         <div class="g-bk-opts">

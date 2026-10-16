@@ -25,21 +25,33 @@ import type { HomeData, MsgStat, SystemStatus } from '@/types'
 const POLL_INTERVAL = 5000
 const MSG_POLL_EVERY = 6
 
+/**
+ * 上一轮拿到的首页数据（模块级，跨组件实例存活）。
+ * 重进时直接拿它渲染、后台照常刷新。
+ */
+const lastData = {
+  home: null as HomeData | null,
+  status: null as SystemStatus | null,
+  msgStat: null as MsgStat | null,
+  pluginCount: null as number | null,
+  weather: '',
+}
+
 const router = useRouter()
 const auth = useAuthStore()
 const { brand } = useBrandColor()
 
-const loading = ref(true)
-const home = ref<HomeData>({})
-const weather = ref('')
-const pluginCount = ref<number | null>(null)
+const loading = ref(lastData.home === null)
+const home = ref<HomeData>(lastData.home ?? {})
+const weather = ref(lastData.weather)
+const pluginCount = ref<number | null>(lastData.pluginCount)
 const heroImg = ref('')
 const heroFailed = ref(false)
 
-const status = ref<SystemStatus | null>(null)
-const statusLoading = ref(true)
-const msgStat = ref<MsgStat | null>(null)
-const msgLoading = ref(true)
+const status = ref<SystemStatus | null>(lastData.status)
+const statusLoading = ref(lastData.status === null)
+const msgStat = ref<MsgStat | null>(lastData.msgStat)
+const msgLoading = ref(lastData.msgStat === null)
 
 let timer: number | undefined
 let tick = 0
@@ -51,6 +63,7 @@ async function fetchStatus() {
   fetching = true
   try {
     status.value = await apiGetSystemStatus()
+    lastData.status = status.value
   } catch {
     // 轮询失败保留上一次的数据，不清空
   } finally {
@@ -62,6 +75,7 @@ async function fetchStatus() {
 async function fetchMsgStat() {
   try {
     msgStat.value = await apiGetMsgStat(7)
+    lastData.msgStat = msgStat.value
   } catch {
     // 同上
   } finally {
@@ -106,9 +120,10 @@ function loadWeather() {
     .then((res) => {
       // 后端返回的是一句现成的中文描述
       weather.value = typeof res?.weather === 'string' ? res.weather : ''
+      lastData.weather = weather.value
     })
     .catch(() => {
-      weather.value = ''
+      // 拉取不到保持上次显示的内容
     })
 }
 
@@ -207,6 +222,7 @@ onMounted(async () => {
   // 首页数据是主内容，插件数与天气都属于点缀，失败不影响页面
   try {
     home.value = await apiGetHomeData()
+    lastData.home = home.value
   } finally {
     loading.value = false
   }
@@ -214,9 +230,10 @@ onMounted(async () => {
   apiGetPlugins()
     .then((list) => {
       pluginCount.value = Array.isArray(list) ? list.filter((p) => p.installed).length : 0
+      lastData.pluginCount = pluginCount.value
     })
     .catch(() => {
-      pluginCount.value = null
+      // 失败时保留上一次的数字
     })
 
   loadWeather()

@@ -71,7 +71,7 @@ const avatarUrl = computed(() => auth.user?.avatar || '')
 function confirmRestartBot() {
   Modal.confirm({
     title: '重启 Bot',
-    content: '将重启整个 Yunzai 进程，期间机器人会短暂离线。确定继续？',
+    content: '重启 Yunzai，机器人会短暂离线。继续？',
     okText: '确定重启',
     okType: 'danger',
     cancelText: '取消',
@@ -97,7 +97,7 @@ function confirmRestartGuoba() {
 function confirmLogout() {
   Modal.confirm({
     title: '退出登录',
-    content: '退出后需要重新输入用户名和密码登录，本机的可信设备记录会保留。',
+    content: '退出后要重新登录，可信设备记录会保留。',
     okText: '退出',
     okType: 'danger',
     cancelText: '取消',

@@ -28,8 +28,14 @@ const dividerIsNote = computed(() => dividerLabel.value.length > 24)
 /**
  * 整行大组件（子表单、标签、多选群/好友等）：label 塞进固定 160px 的横向列里会被挤成
  * 好几行，很难看。这类组件让 FormItem 走整行竖排，label 独占一行放上方。
+ *
+ * schema 里写 `block: false` 可以把这个默认行为**单独关掉** —— 有的 label 很短
+ * （比如「不收开黑播报的群」），走常规的「标签左、控件右」反而和上下其它字段对得齐。
  */
-const isBlock = computed(() => BLOCK_COMPONENTS.has(props.schema.component ?? ''))
+const isBlock = computed(() => {
+  if (props.schema.block === false) return false
+  return BLOCK_COMPONENTS.has(props.schema.component ?? '')
+})
 const fullSpan = { span: 24 }
 
 /** 未知组件：给出可见提示，而不是静默渲染成空白 */

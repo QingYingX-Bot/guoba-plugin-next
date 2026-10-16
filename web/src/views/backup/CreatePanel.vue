@@ -51,7 +51,7 @@ const groups = computed<PickerGroup[]>(() => {
       // 配置和数据不在插件目录里的插件（比如数据存在 Yunzai 根 data/ 下的）没有推荐项，
       // 但仓库自带的文件仍然列得出来 —— 想整个带走随时能勾
       emptyHint: p.git
-        ? `这个目录是空的。还原时按 ${p.branch || '默认分支'}${at} 自动 clone 回来。`
+        ? `目录是空的，还原时会按 ${p.branch || '默认分支'}${at} clone 回来。`
         : '这个目录是空的。',
       entries: p.entries,
     })

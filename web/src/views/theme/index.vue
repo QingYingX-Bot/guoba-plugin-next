@@ -184,9 +184,6 @@ onUnmounted(() => {
             <span class="g-selectable">{{ appStore.effectivePrimary }}</span>
             <template v-if="!draft.primaryColor">（内置默认：深色暖金 / 浅色灰绿）</template>
           </p>
-          <p class="g-hint">
-            深色与浅色共用这一个主色，按钮、菜单选中态、柔光与前景字色都会跟着推导出来。
-          </p>
         </Card>
       </Col>
 

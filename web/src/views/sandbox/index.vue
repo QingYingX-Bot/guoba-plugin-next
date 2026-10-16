@@ -487,8 +487,8 @@ function metaText(meta: NonNullable<ChatItem['meta']>) {
 const senderName = computed(() => scene.value.card || scene.value.nickname || '我')
 
 const platformTip =
-  '模拟目标平台：普通消息下按钮与 Markdown 段会被忽略（OneBot 等适配器的真实行为）；' +
-  '切到 Markdown / 按钮则假装成 QQ 官方 Bot，这两类段会渲染出来，' +
+  '模拟目标平台：普通消息忽略按钮和 Markdown 段（OneBot 的真实行为）；' +
+  '切到 Markdown / 按钮则假装成 QQ 官方 Bot，这两类段会渲染，' +
   '插件里判断 e.bot.adapter.name === "QQBot" 的分支也会走通。'
 
 const currentBot = computed(() => {

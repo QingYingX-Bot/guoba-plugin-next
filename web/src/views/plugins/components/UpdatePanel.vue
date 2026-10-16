@@ -30,8 +30,8 @@ const logBox = ref<HTMLElement | null>(null)
 
 const MODE_OPTIONS = [
   { value: 'safe', label: '跳过有改动的插件', desc: '最稳，自己改过的插件原样不动' },
-  { value: 'stash', label: '暂存改动后更新', desc: 'git stash 收走再更新，更新完放回；冲突时改动留在 stash 里' },
-  { value: 'force', label: '丢弃改动强制更新', desc: 'git reset --hard，本地改动和未推送的提交都会没了' },
+  { value: 'stash', label: '暂存改动后更新', desc: '先 stash 再更新，完了放回；冲突时留在 stash' },
+  { value: 'force', label: '丢弃改动强制更新', desc: 'git reset --hard，本地改动和未推送的提交全丢' },
 ] as const
 
 /** 有更新的插件 */
@@ -178,14 +178,14 @@ defineExpose({ openUpdate, startCheck })
         type="info"
         show-icon
         class="g-pu-alert"
-        :message="`勾中的 ${dirtyPicked.length} 个插件有本地改动，当前模式下会被跳过`"
+        :message="`勾中的 ${dirtyPicked.length} 个插件有本地改动，会被跳过`"
       />
       <Alert
         v-if="mode === 'force'"
         type="warning"
         show-icon
         class="g-pu-alert"
-        message="强制更新会丢掉这些插件里的本地改动和未推送的提交，且找不回来"
+        message="会丢掉这些插件的本地改动和未推送的提交，找不回来"
       />
 
       <div class="g-pu-opts">

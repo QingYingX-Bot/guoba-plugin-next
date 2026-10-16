@@ -10,11 +10,26 @@ import { computed, inject, ref } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import GIcon from '@/components/GIcon.vue'
+import { applyMdImageSize } from '@/utils/mdImage'
 import type { MsgBtn, MsgSeg } from '@/api'
 
 const props = defineProps<{ seg: MsgSeg }>()
 
 const emit = defineEmits<{ forward: [seg: MsgSeg] }>()
+
+/**
+ * 插件 README 那边用的是 DOMPurify 的默认实例，且不需要给链接加 target，所以这里另起一个
+ * 实例挂 hook，别顺手把别的页面的渲染行为一起改了。
+ */
+const purify = DOMPurify(window)
+purify.addHook('afterSanitizeAttributes', (node) => {
+  // 面板是单页应用，链接在原标签页打开会把整个面板顶掉。hook 跑在属性过滤之后，
+  // 所以这里补的 target / rel 不会再被清掉，不必再往 sanitize 里塞 ADD_ATTR
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+})
 
 /**
  * 缩略图尺寸，与样式里 .g-seg-img 的 max-width / .is-long 的 max-height 保持一致。
@@ -86,15 +101,21 @@ const btnCount = computed(() =>
   (props.seg.rows ?? []).reduce((sum, row) => sum + row.length, 0),
 )
 
-/** markdown 内容出自插件，仍按不可信处理，跟插件 README 一样过一遍 DOMPurify */
+/**
+ * markdown 内容出自插件，仍按不可信处理，跟插件 README 一样过一遍 DOMPurify。
+ *
+ * `breaks: true`：QQ 的 markdown 里一个换行就是一行，标准 markdown 会把单个换行当软换行
+ * 折成一个空格，照标准渲染行会挤成一坨。表格、裸链接（`https://…`）由 marked 的 gfm 负责，
+ * 默认已开。
+ */
 const mdHtml = computed(() => {
   const content = props.seg.content
   if (!content) return ''
-  const parsed = marked.parse(content, { async: false }) as string
-  return DOMPurify.sanitize(parsed, {
-    ADD_ATTR: ['target', 'rel'],
+  const parsed = marked.parse(content, { async: false, breaks: true }) as string
+  const clean = purify.sanitize(parsed, {
     FORBID_TAGS: ['style', 'script', 'iframe', 'form', 'input'],
   })
+  return applyMdImageSize(clean)
 })
 
 const sizeText = computed(() => {
@@ -151,11 +172,12 @@ const fileIcon: Record<string, string> = {
         <span v-if="imgLong" class="g-seg-img-more">长图 · 点击查看完整</span>
       </span>
       <!-- 预览层交给 antd，能缩放旋转，比新开标签页顺手；本体不占位 -->
-      <a-image
-        :src="src"
-        :style="{ display: 'none' }"
-        :preview="{ visible: imgPreview, onVisibleChange: (v: boolean) => (imgPreview = v) }"
-      />
+      <span v-show="false">
+        <a-image
+          :src="src"
+          :preview="{ visible: imgPreview, onVisibleChange: (v: boolean) => (imgPreview = v) }"
+        />
+      </span>
     </template>
   </template>
 
@@ -227,14 +249,27 @@ const fileIcon: Record<string, string> = {
     </div>
   </template>
 
-  <!-- markdown：content 形式的能渲染，原生模板只能摊原始数据 -->
+  <!-- markdown：content 形式的能渲染；原生模板的正文在 QQ 服务端，只能说明情况 -->
   <template v-else-if="seg.type === 'markdown'">
     <details v-if="seg.ignored" class="g-seg-ignored">
       <summary>Markdown 消息 · 当前平台不显示</summary>
       <div v-if="mdHtml" class="g-seg-md" v-html="mdHtml" />
       <pre v-else-if="seg.raw">{{ seg.raw }}</pre>
     </details>
+
     <div v-else-if="mdHtml" class="g-seg-md" v-html="mdHtml" />
+
+    <!-- 模板 id + 参数发出去，正文由 QQ 按模板渲染，本地这份还原不出来 -->
+    <div v-else-if="seg.template" class="g-seg-md-template">
+      <span class="g-seg-md-template-tip">
+        Markdown 原生模板 · 正文由 QQ 服务端按模板渲染，本地只有模板 id 与参数
+      </span>
+      <details v-if="seg.raw" class="g-seg-raw">
+        <summary>markdown</summary>
+        <pre>{{ seg.raw }}</pre>
+      </details>
+    </div>
+
     <details v-else class="g-seg-raw">
       <summary>markdown</summary>
       <pre>{{ seg.raw }}</pre>
@@ -536,7 +571,12 @@ const fileIcon: Record<string, string> = {
   color: var(--g-text-sub);
 }
 
+/* 表格可能很宽，按 GitHub 那套让表自己横向滚，别把气泡撑破 */
 .g-seg-md :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
 }
 
@@ -544,6 +584,17 @@ const fileIcon: Record<string, string> = {
 .g-seg-md :deep(td) {
   padding: 4px 8px;
   border: 1px solid var(--g-border);
+}
+
+/* markdown 原生模板：本地没有正文，给一句说明，原始参数折在后面 */
+.g-seg-md-template {
+  margin: 2px 0;
+}
+
+.g-seg-md-template-tip {
+  display: block;
+  color: var(--g-text-dim);
+  font-size: 12px;
 }
 
 .g-seg-node {

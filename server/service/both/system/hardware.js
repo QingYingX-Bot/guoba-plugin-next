@@ -25,6 +25,94 @@ let si
  */
 let hasGpuMetrics = null
 
+/**
+ * 慢指标缓存时长。
+ *
+ * Windows 上这两个是开销大头：`si.graphics()` 一次要起 5~6 个 PowerShell 进程
+ * （Win32_VideoController、win32_desktopmonitor、WMI 显示器、System.Windows.Forms…），
+ * `si.cpuTemperature()` 还要再补一个，而单个 PowerShell 的启动就要几百毫秒到数秒。
+ * 首页每 5 秒轮询一次状态 —— 不缓存的话，Windows 机器会不停地起系统命令，
+ * 状态自然「读得慢」，整个面板也跟着发卡。
+ *
+ * 显卡占用与 CPU 温度变化本就慢，缓十几秒到一分钟完全不影响观感。
+ */
+const GPU_TTL = 15 * 1000
+const CPU_TEMP_TTL = 60 * 1000
+
+/**
+ * 单个硬件读取的硬超时。
+ *
+ * si 内部的 child_process **没有超时**（`lib/util.js` 的 exec 只设了 maxBuffer），
+ * PowerShell 一旦卡住就永远不返回 —— Windows 上 `System.Windows.Forms.Screen::AllScreens`
+ * 这类调用在无桌面会话 / 某些驱动下就会挂死。不设超时的话那个 promise 永远不 resolve，
+ * 后面每个请求都跟着一起等，面板表现就是「状态一直在加载中、点不动」。
+ */
+const READ_TIMEOUT = 6 * 1000
+
+/** 超时 / 报错后的熔断时长：这期间不再去碰它，免得反复堆卡死的系统进程 */
+const BREAK_TTL = 10 * 60 * 1000
+
+/** 给 promise 加一个硬超时 */
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`读取超时（${ms}ms）`)), ms)
+    Promise.resolve(promise).then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
+/**
+ * 带 TTL、并发合并、超时与熔断的记忆化。
+ *
+ * - 成功：按 `ttl` 缓存；
+ * - 超时或报错：按 `breakTtl` 缓存（熔断），这期间直接返回 `fallback`。
+ *   卡死的 PowerShell 不会因为「多试几次」就好，只会让每个请求都白等一个超时。
+ * - 重算期间后来的调用共用同一个 promise（首页轮询 + 多开标签页会同时打进来）。
+ */
+function memo({ttl, timeout = 0, breakTtl = ttl, fallback}, fn) {
+  let at = 0
+  let value = fallback
+  let has = false
+  let ok = false
+  let pending = null
+  return async () => {
+    if (has && Date.now() - at < (ok ? ttl : breakTtl)) {
+      return value
+    }
+    if (pending) {
+      return pending
+    }
+    pending = Promise.resolve()
+      .then(() => (timeout > 0 ? withTimeout(fn(), timeout) : fn()))
+      .then((v) => {
+        value = v
+        ok = true
+      })
+      .catch((e) => {
+        ok = false
+        logger.warn?.(`[Guoba] 硬件指标读取失败，本次跳过：${e?.message || e}`)
+        value = fallback
+      })
+      .then(() => {
+        has = true
+        at = Date.now()
+        return value
+      })
+      .finally(() => {
+        pending = null
+      })
+    return pending
+  }
+}
+
 async function loadSi() {
   if (si !== undefined) return si
   try {
@@ -100,8 +188,8 @@ async function readCore(lib) {
   return out
 }
 
-/** 显卡：型号、占用、显存、温度 */
-async function readGpu(lib) {
+/** 显卡：型号、占用、显存、温度（原样读一次，对外的 readGpu 走缓存） */
+async function readGpuRaw(lib) {
   if (hasGpuMetrics === false) return null
   const {controllers} = await lib.graphics()
   const card = controllers?.find((it) => it?.utilizationGpu != null && it?.memoryTotal)
@@ -123,8 +211,8 @@ async function readGpu(lib) {
   }
 }
 
-/** CPU 温度。虚拟机和不少云主机读不到，返回 0 表示没有 */
-async function readCpuTemp(lib) {
+/** CPU 温度。虚拟机和不少云主机读不到，返回 0 表示没有（原样读一次，对外的 readCpuTemp 走缓存） */
+async function readCpuTempRaw(lib) {
   try {
     const t = await lib.cpuTemperature()
     return Number(t?.main) > 0 ? Number(t.main) : 0
@@ -132,6 +220,23 @@ async function readCpuTemp(lib) {
     return 0
   }
 }
+
+// 显卡与 CPU 温度是 Windows 上的开销大头，统一走缓存 + 超时 + 熔断（原因见上面的常量说明）
+const readGpu = memo(
+  {ttl: GPU_TTL, timeout: READ_TIMEOUT, breakTtl: BREAK_TTL, fallback: null},
+  async () => {
+    const lib = await loadSi()
+    return lib ? readGpuRaw(lib) : null
+  },
+)
+
+const readCpuTemp = memo(
+  {ttl: CPU_TEMP_TTL, timeout: READ_TIMEOUT, breakTtl: BREAK_TTL, fallback: 0},
+  async () => {
+    const lib = await loadSi()
+    return lib ? readCpuTempRaw(lib) : 0
+  },
+)
 
 /** 内存盘 / 容器叠加层 / 只读镜像，这些混进来会把容量算歪 */
 const IGNORE_FS = /^(udev|tmpfs|devtmpfs|overlay|overlay2|squashfs|shm|none|ramfs|fuse\.\w+)$/i
@@ -144,6 +249,8 @@ const IGNORE_FS = /^(udev|tmpfs|devtmpfs|overlay|overlay2|squashfs|shm|none|ramf
  */
 const DISK_TTL = 30 * 1000
 let diskCache = {at: 0, list: []}
+/** fsSize 卡过之后的熔断截止时刻，见 readDisks */
+let diskBrokenUntil = 0
 
 /**
  * 所有磁盘。
@@ -153,8 +260,16 @@ let diskCache = {at: 0, list: []}
  */
 async function readDisks(lib) {
   const now = Date.now()
+  // 刚卡过一次就先别碰：fsSize 在 Windows 上也是 PowerShell，卡死一次能拖垮一整轮采集
+  if (now < diskBrokenUntil) return diskCache.list
   if (diskCache.list.length && now - diskCache.at < DISK_TTL) return diskCache.list
-  const list = await lib.fsSize()
+  let list
+  try {
+    list = await withTimeout(lib.fsSize(), READ_TIMEOUT)
+  } catch (e) {
+    diskBrokenUntil = Date.now() + BREAK_TTL
+    throw e
+  }
   if (!Array.isArray(list)) return []
   const seen = new Set()
   const out = []
@@ -195,8 +310,8 @@ export async function collect() {
       logger.debug?.(`[Guoba] 读取 CPU / 内存失败：${err.message}`)
       return {}
     }),
-    readGpu(lib).catch(() => null),
-    readCpuTemp(lib),
+    readGpu().catch(() => null),
+    readCpuTemp(),
     readDisks(lib).catch((err) => {
       logger.debug?.(`[Guoba] 读取磁盘失败：${err.message}`)
       return []
@@ -220,4 +335,13 @@ export async function collect() {
     gpu,
     disks,
   }
+}
+
+/**
+ * 预热上面那两个慢指标，别让第一次打开首页卡在 PowerShell 上。
+ * 失败无所谓 —— 缓存没填上，下次照常重算。
+ */
+export function warmupDynamic() {
+  readGpu().catch(() => {})
+  readCpuTemp().catch(() => {})
 }
