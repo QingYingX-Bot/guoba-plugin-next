@@ -23,6 +23,7 @@ function sha256(value) {
 export class AccessGateService extends Service {
 
   accessFreezeService = autowired('accessFreezeService')
+  loginSecurityService = autowired('loginSecurityService')
 
   get auth() {
     const auth = cfg.get('auth')
@@ -97,8 +98,8 @@ export class AccessGateService extends Service {
 
   /** 给拦截器用的判定：是否需要密码 */
   async checkAccess(req) {
-    if (!this.configured) return { locked: false, needPassword: false }
-    return { locked: false, needPassword: !(await this.isUnlocked(req)) }
+    if (!this.configured) return { needPassword: false }
+    return { needPassword: !(await this.isUnlocked(req)) }
   }
 
   async getStatus(req) {
@@ -240,5 +241,23 @@ export class AccessGateService extends Service {
     cfg.set('auth.gatePasswordHash', '')
     await this.#clearAll()
     return { configured: false, unlocked: true, locked: false, lockSeconds: 0 }
+  }
+
+  /**
+   * 忘记二级密码时的兜底：用登录密码直接重置。
+   *
+   * 只有已登录的会话才能调到这里；登录密码错误同样计入失败次数，
+   * 连错 3 次照样冻结整个面板。
+   */
+  async resetPassword(req, loginPassword, password) {
+    if (!this.loginConfigured) throw new GuobaError('请先设置登录账号密码')
+    if (!this.configured) throw new GuobaError('尚未设置二级密码')
+    await this.loginSecurityService.verifyPasswordForSensitiveAction(req, loginPassword)
+    if (!validatePassword(password)) throw new GuobaError('新二级密码须为8至128位')
+    if (verifyPassword(password, this.auth.passwordHash)) throw new GuobaError('二级密码不能与登录密码相同')
+    cfg.set('auth.gatePasswordHash', hashPassword(password))
+    await this.#clearAll()
+    // 重置后同样不自动解锁，用新密码重新验证
+    return { configured: true, unlocked: false, locked: false, lockSeconds: 0 }
   }
 }

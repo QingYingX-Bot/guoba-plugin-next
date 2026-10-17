@@ -39,7 +39,7 @@ let tokenGetter: () => string | undefined = () => undefined
 let gateTokenGetter: () => string | undefined = () => undefined
 /** 401 处理回调，由 store 注册 */
 let unauthorizedHandler: () => void = () => undefined
-/** 二级密码拦截回调：需要密码 / 被锁定，由 main.ts 跳到锁屏页 */
+/** 二级密码拦截回调：需要密码，由 main.ts 跳到锁屏页 */
 let gateBlockedHandler: (code: number, data: any) => void = () => undefined
 /** 面板冻结回调：由 main.ts 跳到冻结页 */
 let frozenHandler: () => void = () => undefined
@@ -138,7 +138,7 @@ http.interceptors.response.use(
       unauthorized.code = Number(data?.code)
       return Promise.reject(unauthorized)
     }
-    // 二级密码：需要密码或被锁定，交给 main.ts 里的回调切到锁屏页
+    // 二级密码：需要密码（4232 是旧版锁定码，保留兼容），交给 main.ts 里的回调切到锁屏页
     if (status === 403) {
       const code = Number(data?.code)
       if (code === GATE_REQUIRED_CODE || code === GATE_LOCKED_CODE) {

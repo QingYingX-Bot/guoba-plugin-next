@@ -276,8 +276,8 @@ onMounted(load)
         </Tag>
       </template>
       <p class="g-sec-tip">
-        开启后，进入文件管理、数据浏览、终端和消息记录要再输入一次二级密码；
-        连续输错 3 次锁定 10 分钟，再犯逐级翻倍，锁定期间沙盒和运行日志也一并锁住。
+        开启后，进入文件管理、数据浏览、终端、消息记录和账号管理需要再输入一次二级密码；
+        连续输错 3 次会冻结整个面板，私聊机器人发送 #锅巴解冻 恢复；忘记密码可在锁屏页用登录密码重置。
       </p>
       <Form layout="vertical" class="g-sec-form">
         <div class="g-sec-grid is-configured">

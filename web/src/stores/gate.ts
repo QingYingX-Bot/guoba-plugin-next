@@ -14,9 +14,9 @@ export const useGateStore = defineStore('gate', () => {
   const configured = ref(false)
   /** 本次浏览器会话是否已解锁 */
   const unlocked = ref(true)
-  /** 当前 IP 是否处于锁定状态 */
+  /** 旧版按 IP 锁定的字段：现在冻结由服务端统一处理，这里恒为 false，保留兼容 */
   const locked = ref(false)
-  /** 锁定剩余秒数 */
+  /** 锁定剩余秒数（旧字段，当前恒为 0） */
   const lockSeconds = ref(0)
   /** 是否已经从服务端拿到过状态 */
   const checked = ref(false)

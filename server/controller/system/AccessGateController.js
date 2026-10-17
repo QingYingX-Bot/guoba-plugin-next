@@ -18,6 +18,7 @@ export class AccessGateController extends ApiController {
   registerRouters() {
     this.get('/status', this.status)
     this.post('/unlock', this.unlock)
+    this.post('/reset', this.resetPassword)
     this.put('/password', this.setPassword)
     this.delete('/password', this.clearPassword)
   }
@@ -49,6 +50,22 @@ export class AccessGateController extends ApiController {
       await this.accessGateService.setPassword(currentPassword, password),
       '二级密码已保存',
     )
+  }
+
+  /** 忘记二级密码：用登录密码直接重置 */
+  async resetPassword(req) {
+    const { loginPassword, password } = req.body ?? {}
+    try {
+      return Result.ok(
+        await this.accessGateService.resetPassword(req, loginPassword, password),
+        '二级密码已重置',
+      )
+    } catch (error) {
+      if (error?.frozen) {
+        return new Result(Constant.FROZEN_CODE, { frozen: true }, error.message, 423)
+      }
+      throw error
+    }
   }
 
   async clearPassword(req) {

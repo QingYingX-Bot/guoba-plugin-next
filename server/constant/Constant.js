@@ -44,7 +44,7 @@ export default {
   GATE_TOKEN_KEY: 'guoba-gate-token',
   // 需要解锁凭证的接口被拦时的业务码
   GATE_REQUIRED_CODE: 4231,
-  // 被锁定时统一拒绝的业务码
+  // 旧版「按 IP 锁定」的业务码，保留给老前端兼容；现在一律走 FROZEN_CODE
   GATE_LOCKED_CODE: 4232,
   // 二级密码输错、登录会话已被强制退出时的业务码（HTTP 401）
   GATE_FAILED_CODE: 4233,

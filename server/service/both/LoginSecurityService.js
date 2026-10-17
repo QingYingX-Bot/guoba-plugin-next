@@ -83,11 +83,11 @@ export class LoginSecurityService extends Service {
     cfg.set('auth.passwordHash', '')
     cfg.set('auth.trustedIps', [])
     cfg.set('auth.trustedDevices', [])
-    // 连密码错误的锁定一起清掉 —— 主人正是在被锁的时候才会来重置，不清就还得干等
+    // 连密码错误的计数一起清掉 —— 主人正是在被锁/冻结的时候才会来重置
     this.#clearPasswordAttempts()
   }
 
-  /** 清掉所有 IP 的密码失败计数、锁定标记和升级等级 */
+  /** 清掉所有 IP 的密码失败计数 */
   #clearPasswordAttempts() {
     const pattern = `${Constant.REDIS_PREFIX}login-captcha:*:password-*`
     try {
@@ -310,6 +310,32 @@ export class LoginSecurityService extends Service {
   clearDevices() {
     cfg.set('auth.trustedDevices', [])
     return this.getSecurity()
+  }
+
+  /**
+   * 敏感操作（比如忘记二级密码时的重置）验证登录密码。
+   * 失败同样计入登录密码错误次数，连错 3 次也会冻结整个面板。
+   */
+  async verifyPasswordForSensitiveAction(req, password) {
+    const ip = getClientIp(req)
+    const passwordKey = this.passwordAttemptsKey(ip)
+    if (verifyPassword(password, this.auth.passwordHash)) {
+      await redis.del(passwordKey)
+      return true
+    }
+    const attempts = await redis.incr(passwordKey)
+    if (attempts >= Constant.FREEZE_MAX_ATTEMPTS) {
+      await this.accessFreezeService.freeze('登录密码连续输错 3 次', {
+        ip,
+        ua: req?.headers?.['user-agent'],
+      })
+      await redis.del(passwordKey)
+      const error = new GuobaError('登录密码错误次数过多，锅巴已冻结，请主人发送 #锅巴解冻 恢复')
+      error.frozen = true
+      throw error
+    }
+    await redis.expire(passwordKey, Constant.LOGIN_PASSWORD_ATTEMPT_WINDOW)
+    throw new GuobaError('登录密码错误')
   }
 
   async login(req, body, loginService) {

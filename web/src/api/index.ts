@@ -80,9 +80,9 @@ export interface GateStatus {
   configured: boolean
   /** 当前浏览器会话是否已解锁 */
   unlocked: boolean
-  /** 当前 IP 是否因输错次数过多被锁 */
+  /** 旧版按 IP 锁定字段：当前恒为 false，保留兼容 */
   locked: boolean
-  /** 锁定剩余秒数 */
+  /** 锁定剩余秒数（旧字段，当前恒为 0） */
   lockSeconds: number
 }
 
@@ -94,6 +94,10 @@ export const apiGateUnlock = (password: string) =>
 
 export const apiSetGatePassword = (body: { currentPassword: string; password: string }) =>
   put<GateStatus>('/gate/password', body, { showSuccess: true })
+
+/** 忘记二级密码：用登录密码重置（登录密码错误同样计入冻结次数） */
+export const apiResetGatePassword = (body: { loginPassword: string; password: string }) =>
+  post<GateStatus>('/gate/reset', body)
 
 export const apiClearGatePassword = (currentPassword: string) =>
   del<GateStatus>('/gate/password', { currentPassword }, { showSuccess: true })

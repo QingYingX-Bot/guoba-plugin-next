@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Button, Input, Spin, message } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
+import { apiResetGatePassword } from '@/api'
 import { useGateStore } from '@/stores/gate'
 
 /**
  * 二级密码锁屏。
  *
- * 进入文件管理 / 数据浏览 / 终端 / 消息记录前会先到这个页面；
- * 输错次数过多时（连沙盒、运行日志一起）也停在这里等倒计时结束。
+ * 进入文件管理 / 数据浏览 / 终端 / 消息记录 / 账号管理前先到这里验证；
+ * 连续输错 3 次会冻结整个面板（跳到 /frozen），不再在本地倒计时。
  */
 const route = useRoute()
 const router = useRouter()
@@ -19,11 +20,14 @@ const password = ref('')
 const loading = ref(true)
 const submitting = ref(false)
 const errorText = ref('')
-const remaining = ref(0)
 /** 服务端状态没拿到时的提示 */
 const loadError = ref('')
 
-let timer: number | undefined
+/** 解锁 / 忘记密码时的重置 */
+const mode = ref<'unlock' | 'reset'>('unlock')
+const resetting = ref(false)
+const resetError = ref('')
+const resetForm = reactive({ loginPassword: '', password: '', confirmPassword: '' })
 
 const redirect = computed(() => {
   const value = typeof route.query.redirect === 'string' ? route.query.redirect : ''
@@ -32,44 +36,13 @@ const redirect = computed(() => {
   return value
 })
 
-const countdownText = computed(() => {
-  const total = Math.max(0, remaining.value)
-  const minutes = Math.floor(total / 60)
-  const seconds = total % 60
-  if (minutes <= 0) return `${seconds} 秒`
-  return `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
-})
-
-function stopCountdown() {
-  if (timer !== undefined) {
-    window.clearInterval(timer)
-    timer = undefined
-  }
-}
-
-function startCountdown() {
-  stopCountdown()
-  if (remaining.value <= 0) return
-  timer = window.setInterval(() => {
-    if (remaining.value > 0) remaining.value -= 1
-    if (remaining.value <= 0) {
-      stopCountdown()
-      void refresh()
-    }
-  }, 1000)
-}
-
 async function refresh() {
   loading.value = true
   loadError.value = ''
   try {
     const status = await gate.check()
-    remaining.value = status.locked ? status.lockSeconds : 0
-    if (status.locked) {
-      startCountdown()
-    }
     // 没开二级密码、或者本次会话已经解锁过，就不用停在这
-    if (!status.locked && (!status.configured || status.unlocked)) {
+    if (!status.configured || status.unlocked) {
       router.replace(redirect.value)
     }
   } catch (error: any) {
@@ -93,21 +66,66 @@ async function submit() {
     router.replace(redirect.value)
   } catch (error: any) {
     errorText.value = error?.message || '二级密码错误'
-    // 错误次数可能刚好触发锁定，重新同步一次状态
-    try {
-      const status = await gate.check()
-      remaining.value = status.locked ? status.lockSeconds : 0
-      if (status.locked) startCountdown()
-    } catch {
-      // 拿不到状态就只显示错误文案
-    }
   } finally {
     submitting.value = false
   }
 }
 
+/** 打开「忘记二级密码」的重置表单 */
+function openReset() {
+  mode.value = 'reset'
+  resetError.value = ''
+  resetForm.loginPassword = ''
+  resetForm.password = ''
+  resetForm.confirmPassword = ''
+}
+
+function backToUnlock() {
+  mode.value = 'unlock'
+  resetError.value = ''
+}
+
+/** 用登录密码重置二级密码 */
+async function submitReset() {
+  if (!resetForm.loginPassword) {
+    message.warning('请输入当前登录密码')
+    return
+  }
+  if (!resetForm.password) {
+    message.warning('请输入新二级密码')
+    return
+  }
+  if (resetForm.password.length < 8 || resetForm.password.length > 128) {
+    message.warning('新二级密码须为8至128位')
+    return
+  }
+  if (resetForm.password !== resetForm.confirmPassword) {
+    message.warning('两次输入的二级密码不一致')
+    return
+  }
+  resetting.value = true
+  resetError.value = ''
+  try {
+    await apiResetGatePassword({
+      loginPassword: resetForm.loginPassword,
+      password: resetForm.password,
+    })
+    // 重置后不自动解锁，继续用新密码验证
+    gate.lockNow()
+    mode.value = 'unlock'
+    password.value = ''
+    resetForm.loginPassword = ''
+    resetForm.password = ''
+    resetForm.confirmPassword = ''
+    message.success('二级密码已重置，请用新密码解锁')
+  } catch (error: any) {
+    resetError.value = error?.message || '重置失败'
+  } finally {
+    resetting.value = false
+  }
+}
+
 onMounted(refresh)
-onUnmounted(stopCountdown)
 </script>
 
 <template>
@@ -121,21 +139,45 @@ onUnmounted(stopCountdown)
           <Button type="primary" block @click="refresh">重试</Button>
         </template>
 
-        <template v-else-if="gate.locked">
-          <div class="g-gate-icon is-locked"><GIcon icon="ant-design:close-outlined" :size="28" /></div>
-          <h2 class="g-gate-title">功能已锁定</h2>
-          <p class="g-gate-desc">
-            密码错误次数过多，文件管理、数据浏览、终端、消息记录，
-            以及沙盒和运行日志暂时都不能使用。
-          </p>
-          <div class="g-gate-countdown">{{ countdownText }}后自动恢复</div>
-        </template>
 
         <template v-else-if="!gate.configured">
           <div class="g-gate-icon"><GIcon icon="ant-design:safety-outlined" :size="28" /></div>
           <h2 class="g-gate-title">尚未设置二级密码</h2>
           <p class="g-gate-desc">请先到「登录安全」页面开启二级密码。</p>
           <Button type="primary" block @click="router.replace('/account/security')">去设置</Button>
+        </template>
+
+        <template v-else-if="mode === 'reset'">
+          <div class="g-gate-icon"><GIcon icon="ant-design:safety-outlined" :size="28" /></div>
+          <h2 class="g-gate-title">重置二级密码</h2>
+          <p class="g-gate-desc">输入当前登录密码，并设置一个新的二级密码。</p>
+          <Input.Password
+            v-model:value="resetForm.loginPassword"
+            size="large"
+            placeholder="当前登录密码"
+            autocomplete="current-password"
+            :disabled="resetting"
+          />
+          <Input.Password
+            v-model:value="resetForm.password"
+            size="large"
+            placeholder="新二级密码（8 位或以上）"
+            autocomplete="new-password"
+            :disabled="resetting"
+          />
+          <Input.Password
+            v-model:value="resetForm.confirmPassword"
+            size="large"
+            placeholder="确认新二级密码"
+            autocomplete="new-password"
+            :disabled="resetting"
+            @press-enter="submitReset"
+          />
+          <p v-if="resetError" class="g-gate-error">{{ resetError }}</p>
+          <Button type="primary" size="large" block :loading="resetting" @click="submitReset">
+            重置二级密码
+          </Button>
+          <button type="button" class="g-gate-link" @click="backToUnlock">返回输入密码</button>
         </template>
 
         <template v-else>
@@ -156,6 +198,9 @@ onUnmounted(stopCountdown)
           <Button type="primary" size="large" block :loading="submitting" @click="submit">
             解锁
           </Button>
+          <button type="button" class="g-gate-link" @click="openReset">
+            忘记二级密码？用登录密码重置
+          </button>
         </template>
       </Spin>
     </div>
@@ -194,11 +239,6 @@ onUnmounted(stopCountdown)
   background: var(--g-brand-soft);
 }
 
-.g-gate-icon.is-locked {
-  color: var(--g-danger);
-  background: rgba(217, 97, 76, 0.14);
-}
-
 .g-gate-title {
   margin: 0 0 8px;
   font-size: 18px;
@@ -219,15 +259,22 @@ onUnmounted(stopCountdown)
   color: var(--g-danger);
 }
 
-.g-gate-countdown {
-  margin-top: 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--g-danger);
-  font-variant-numeric: tabular-nums;
-}
 
 .g-gate-card :deep(.ant-input-affix-wrapper) {
   margin-bottom: 16px;
+}
+
+.g-gate-link {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--g-text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.g-gate-link:hover {
+  color: var(--g-brand);
 }
 </style>

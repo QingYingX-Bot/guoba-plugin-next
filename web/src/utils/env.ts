@@ -54,6 +54,7 @@ export const GATE_TOKEN_STORAGE_KEY = 'guoba:gate-token'
 
 /** 受保护接口被拦时的业务码，与后端 Constant 一致 */
 export const GATE_REQUIRED_CODE = 4231
+/** 旧版按 IP 锁定的业务码：当前不再产生，保留兼容 */
 export const GATE_LOCKED_CODE = 4232
 /** 二级密码输错、登录会话被强制退出 */
 export const GATE_FAILED_CODE = 4233

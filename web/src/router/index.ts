@@ -36,7 +36,7 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '首页', icon: 'ant-design:home-outlined' },
       },
       {
-        // 二级密码锁屏。受保护页面未解锁、或输错次数过多被锁时都会跳到这
+        // 二级密码锁屏：受保护页面未解锁时先到这里；连续输错会由服务端冻结并跳 /frozen
         path: 'gate',
         name: 'Gate',
         component: () => import('@/views/gate/index.vue'),
@@ -151,13 +151,13 @@ const routes: RouteRecordRaw[] = [
         path: 'account',
         name: 'Account',
         component: () => import('@/views/account/index.vue'),
-        meta: { title: '账号管理', icon: 'ant-design:user-outlined' },
+        meta: { title: '账号管理', icon: 'ant-design:user-outlined', gate: true },
       },
       {
         path: 'account/security',
         name: 'AccountSecurity',
         component: () => import('@/views/account/LoginSecurity.vue'),
-        meta: { title: '登录安全' },
+        meta: { title: '登录安全', gate: true },
       },
       {
         path: 'about',

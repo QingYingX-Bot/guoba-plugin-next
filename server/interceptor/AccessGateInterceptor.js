@@ -5,8 +5,8 @@ import { _paths, Constant } from '#guoba.platform'
  * 二级密码拦截器。
  *
  * 排在 TokenInterceptor（priority 100）之后，此时登录态已经校验过：
- * - 文件管理 / 数据浏览 / 终端 / 消息记录：必须拿着有效的解锁凭证
- * - 运行日志 / 沙盒：平时放行，但二级密码被输错锁定时一起拒绝
+ * 只有下面这些功能需要额外的解锁凭证；运行日志 / 沙盒在冻结时由
+ * AccessFreezeInterceptor 统一拒绝，这里不用重复处理。
  */
 
 /** 需要二级密码的功能 */
@@ -15,12 +15,10 @@ const PROTECTED = [
   /^\/api\/data(\/|$)/,
   /^\/api\/term(\/|$)/,
   /^\/api\/chat(\/|$)/,
-]
-
-/** 锁定期间一并锁住的功能 */
-const LOCKDOWN = [
-  /^\/api\/log(\/|$)/,
-  /^\/api\/sandbox(\/|$)/,
+  // 账号管理：Bot 账号 / 好友群列表 / 广播
+  /^\/api\/oicq(\/|$)/,
+  // 登录安全：改登录密码、可信 IP / 设备都在这里
+  /^\/api\/login\/security(\/|$)/,
 ]
 
 export default class AccessGateInterceptor extends Interceptor {
@@ -29,9 +27,7 @@ export default class AccessGateInterceptor extends Interceptor {
 
   async handler(req, res, next) {
     const path = this.#relativePath(req)
-    const isProtected = PROTECTED.some(reg => reg.test(path))
-    const isLockdown = LOCKDOWN.some(reg => reg.test(path))
-    if (!isProtected && !isLockdown) {
+    if (!PROTECTED.some(reg => reg.test(path))) {
       next()
       return
     }
@@ -46,7 +42,7 @@ export default class AccessGateInterceptor extends Interceptor {
       return this.#reject(res, Constant.GATE_REQUIRED_CODE, '无法校验二级密码，请刷新重试')
     }
 
-    if (isProtected && status.needPassword) {
+    if (status.needPassword) {
       return this.#reject(res, Constant.GATE_REQUIRED_CODE, '此功能需要二级密码')
     }
     next()
