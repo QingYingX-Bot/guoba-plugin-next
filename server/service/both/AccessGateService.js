@@ -87,7 +87,9 @@ export class AccessGateService extends Service {
         if (typeof redis.expire === 'function') {
           await redis.expire(key, Constant.GATE_UNLOCK_TTL)
         } else {
-          await redis.set(key, await redis.get(key), { EX: Constant.GATE_UNLOCK_TTL })
+          // 兜底：重写一遍 value 顺带把 EX 带上（key 可能刚好过期，别把 null 写进去）
+          const current = await redis.get(key)
+          if (current) await redis.set(key, current, { EX: Constant.GATE_UNLOCK_TTL })
         }
       })()
       Promise.resolve(promise).catch(() => {})

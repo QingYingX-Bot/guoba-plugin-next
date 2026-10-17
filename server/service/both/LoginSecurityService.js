@@ -318,6 +318,7 @@ export class LoginSecurityService extends Service {
    */
   async verifyPasswordForSensitiveAction(req, password) {
     const ip = getClientIp(req)
+    if (!ip) throw new GuobaError('无法识别访问来源')
     const passwordKey = this.passwordAttemptsKey(ip)
     if (verifyPassword(password, this.auth.passwordHash)) {
       await redis.del(passwordKey)

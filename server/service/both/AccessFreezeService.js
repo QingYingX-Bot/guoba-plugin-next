@@ -85,6 +85,9 @@ export class AccessFreezeService extends Service {
     // 端口闸门立即生效，并断开已经建立的 WS（机器人会自动从回环重连）
     setPortFrozen(true)
     closeExistingWebSockets()
+    // 冻结视为安全事件：所有面板登录会话与二级密码解锁凭证一并作废，
+    // 解冻后要重新输入账号密码
+    await this.clearSessions()
     // 同时清掉双方的错误计数：解冻后重新从 0 开始
     await this.clearAttempts()
     if (!existed) this.#notify(info)
@@ -108,6 +111,18 @@ export class AccessFreezeService extends Service {
       `${Constant.REDIS_PREFIX}gate:*:lock`,
       `${Constant.REDIS_PREFIX}gate:*:level`,
     ]
+    await this.#deleteByPattern(patterns)
+  }
+
+  /** 作废所有面板登录会话和二级密码解锁凭证 */
+  async clearSessions() {
+    await this.#deleteByPattern([
+      `${Constant.REDIS_PREFIX}access-token:*`,
+      `${Constant.REDIS_PREFIX}gate-token:*`,
+    ])
+  }
+
+  async #deleteByPattern(patterns) {
     for (const pattern of patterns) {
       try {
         const keys = await redis.keys?.(pattern)
@@ -115,7 +130,7 @@ export class AccessFreezeService extends Service {
           await Promise.all(keys.map(key => redis.del(key)))
         }
       } catch {
-        // 老宿主可能没有 keys，清不掉也不影响解冻本身
+        // 老宿主可能没有 keys，清不掉也不影响冻结 / 解冻本身
       }
     }
   }
