@@ -43,6 +43,9 @@ server:
 auth:
   username: ''
   passwordHash: ''
+  # 二级密码：进入文件管理 / 数据浏览 / 终端 / 消息记录前要再输一次
+  # 留空表示未开启；由「登录安全」页面设置，禁止手动填写明文
+  gatePasswordHash: ''
   trustedIps: []
   # 可信设备：浏览器里存一份长期凭证，换了IP也不用重新验证码
   trustedDevices: []

@@ -27,8 +27,10 @@ import {
   type FsFile,
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { useGateStore } from '@/stores/gate'
 
 const auth = useAuthStore()
+const gate = useGateStore()
 
 /** 当前目录，相对 Yunzai 根；空串 = 根 */
 const currentPath = ref('')
@@ -214,7 +216,7 @@ async function savePreview() {
 
 /** 图片 / 文本下载地址，token 走 query 才能直接进 <img> / <a> */
 function fileUrl(rel: string) {
-  return fileDownloadUrl(rel, auth.token)
+  return fileDownloadUrl(rel, auth.token, gate.gateToken)
 }
 
 /* ---------------- 新建 ---------------- */
@@ -314,12 +316,12 @@ async function uploadFiles(files: File[]) {
 
 function downloadUrl(f: FsFile) {
   return f.isDir
-    ? fileDownloadDirUrl(joinPath(f.name), auth.token)
-    : fileDownloadUrl(joinPath(f.name), auth.token)
+    ? fileDownloadDirUrl(joinPath(f.name), auth.token, gate.gateToken)
+    : fileDownloadUrl(joinPath(f.name), auth.token, gate.gateToken)
 }
 
 /** 当前目录整个打包下载（根目录也能下，包名会是 Yunzai.zip） */
-const currentZipUrl = computed(() => fileDownloadDirUrl(currentPath.value, auth.token))
+const currentZipUrl = computed(() => fileDownloadDirUrl(currentPath.value, auth.token, gate.gateToken))
 
 /** 用一个临时 <a> 触发下载：确认之后才走，不能事先写死在 href 上 */
 function triggerDownload(url: string) {

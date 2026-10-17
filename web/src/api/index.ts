@@ -62,6 +62,42 @@ export const apiGetPermCode = () =>
 
 export const apiGetMenuList = () => get<MenuItem[]>('/getMenuList')
 
+/* ---------------- 冻结状态 ---------------- */
+
+export interface FrozenStatus {
+  frozen: boolean
+  reason: string
+  at: number
+}
+
+/** 公开接口：冻结时前端靠它显示冻结页并轮询是否已解冻 */
+export const apiGetFrozenStatus = () =>
+  get<FrozenStatus>('/frozen/status', undefined, { showError: false })
+
+/* ---------------- 二级密码 ---------------- */
+export interface GateStatus {
+  /** 是否已设置二级密码 */
+  configured: boolean
+  /** 当前浏览器会话是否已解锁 */
+  unlocked: boolean
+  /** 当前 IP 是否因输错次数过多被锁 */
+  locked: boolean
+  /** 锁定剩余秒数 */
+  lockSeconds: number
+}
+
+export const apiGetGateStatus = () =>
+  get<GateStatus>('/gate/status', undefined, { showError: false })
+
+export const apiGateUnlock = (password: string) =>
+  post<{ gateToken: string }>('/gate/unlock', { password }, { showError: false })
+
+export const apiSetGatePassword = (body: { currentPassword: string; password: string }) =>
+  put<GateStatus & { gateToken?: string }>('/gate/password', body, { showSuccess: true })
+
+export const apiClearGatePassword = (currentPassword: string) =>
+  del<GateStatus>('/gate/password', { currentPassword }, { showSuccess: true })
+
 /* ---------------- 首页 ---------------- */
 
 export const apiGetHomeData = () => get<HomeData>('/home/data')
@@ -1213,13 +1249,16 @@ export const apiChatForward = (body: {
   }>('/chat/forward', body)
 
 /** 自己发出去的图片的取用地址 */
-export function chatAssetUrl(assetId: string, token: string) {
-  return `${API_BASE}/chat/asset/${encodeURIComponent(assetId)}?token=${encodeURIComponent(token)}`
+export function chatAssetUrl(assetId: string, token: string, gateToken?: string) {
+  const q = new URLSearchParams({ token })
+  if (gateToken) q.set('gateToken', gateToken)
+  return `${API_BASE}/chat/asset/${encodeURIComponent(assetId)}?${q.toString()}`
 }
 
 /** QQ 直链的 rkey 过期后的兜底：交给服务端代拉一次 */
-export function chatProxyUrl(url: string, token: string) {
+export function chatProxyUrl(url: string, token: string, gateToken?: string) {
   const q = new URLSearchParams({ url, token })
+  if (gateToken) q.set('gateToken', gateToken)
   return `${API_BASE}/chat/proxy?${q.toString()}`
 }
 
@@ -1264,8 +1303,9 @@ export const apiFileUpload = (fd: FormData) =>
   post<{ ok: boolean; saved: string[] }>('/file/upload', fd)
 
 /** 下载地址，token 走 query 才能直接写进 <a href> */
-export function fileDownloadUrl(path: string, token: string) {
+export function fileDownloadUrl(path: string, token: string, gateToken?: string) {
   const q = new URLSearchParams({ path, token })
+  if (gateToken) q.set('gateToken', gateToken)
   return `${API_BASE}/file/download?${q.toString()}`
 }
 
@@ -1281,8 +1321,9 @@ export interface FsDirSize {
 export const apiFileDirSize = (path: string) => get<FsDirSize>('/file/dir-size', { path })
 
 /** 文件夹打包 zip 下载的地址，同样把 token 放 query */
-export function fileDownloadDirUrl(path: string, token: string) {
+export function fileDownloadDirUrl(path: string, token: string, gateToken?: string) {
   const q = new URLSearchParams({ path, token })
+  if (gateToken) q.set('gateToken', gateToken)
   return `${API_BASE}/file/download-dir?${q.toString()}`
 }
 

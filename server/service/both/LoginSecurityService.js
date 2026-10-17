@@ -1,18 +1,14 @@
 import crypto from 'crypto'
-import { Service, GuobaError } from '#guoba.framework'
+import { autowired, Service, GuobaError } from '#guoba.framework'
 import { cfg, Constant } from '#guoba.platform'
 import { randomString } from '#guoba.utils'
 import { getClientIp, normalizeClientIp } from '../../utils/clientIp.js'
 import { hashPassword, validatePassword, validateUsername, verifyPassword } from '../../utils/passwordHash.js'
 
-/** 锁定倒计时文案：不足 1 小时说分钟，超过就说小时 */
-function formatLockWait(seconds) {
-  const minutes = Math.max(1, Math.ceil(seconds / 60))
-  if (minutes < 60) return `${minutes} 分钟`
-  return `${Math.ceil(minutes / 60)} 小时`
-}
-
 export class LoginSecurityService extends Service {
+
+  accessFreezeService = autowired('accessFreezeService')
+
   get auth() {
     const auth = cfg.get('auth')
     return auth && typeof auth === 'object' ? auth : {}
@@ -118,16 +114,6 @@ export class LoginSecurityService extends Service {
 
   passwordAttemptsKey(ip) {
     return `${this.captchaKey(ip)}:password-attempts`
-  }
-
-  /** 锁定标记：存在即视为锁着，值里不放东西，时长由 key 的 TTL 决定 */
-  passwordLockKey(ip) {
-    return `${this.passwordAttemptsKey(ip)}:lock`
-  }
-
-  /** 升级等级：第几次被锁（1=锁 10 分钟，2=20 分钟……） */
-  passwordLevelKey(ip) {
-    return `${this.passwordAttemptsKey(ip)}:level`
   }
 
   globalCaptchaKey() {
@@ -335,39 +321,24 @@ export class LoginSecurityService extends Service {
     if (!ip) throw new GuobaError('无法识别访问来源')
     if (!this.configured) throw new GuobaError('请先由主人配置登录账号和密码')
     const passwordKey = this.passwordAttemptsKey(ip)
-    const lockKey = this.passwordLockKey(ip)
-    const levelKey = this.passwordLevelKey(ip)
-    if (await redis.get(lockKey)) {
-      let waitSeconds = Constant.LOGIN_PASSWORD_LOCK_TTL
-      try {
-        if (typeof redis.ttl === 'function') {
-          const ttl = await redis.ttl(lockKey)
-          if (ttl > 0) waitSeconds = ttl
-        }
-      } catch {
-        // 取不到剩余时间就用第一档文案，不影响拦截
-      }
-      throw new GuobaError(`密码错误次数过多，请 ${formatLockWait(waitSeconds)}后再试`)
-    }
     if (!validateUsername(username) || !validatePassword(password)
       || username !== this.auth.username || !verifyPassword(password, this.auth.passwordHash)) {
       const attempts = await redis.incr(passwordKey)
-      if (attempts >= Constant.LOGIN_PASSWORD_MAX_ATTEMPTS) {
-        // 同一 IP 每被锁一次，下一次就翻倍：10 → 20 → 40 …… 最长 24 小时
-        const level = Math.min((Number(await redis.get(levelKey)) || 0) + 1, 32)
-        const ttl = Math.min(
-          Constant.LOGIN_PASSWORD_LOCK_TTL * (2 ** (level - 1)),
-          Constant.LOGIN_PASSWORD_LOCK_MAX_TTL,
-        )
-        await redis.set(levelKey, String(level), {EX: Constant.LOGIN_PASSWORD_LEVEL_TTL})
-        await redis.set(lockKey, 'locked', {EX: ttl})
+      if (attempts >= Constant.FREEZE_MAX_ATTEMPTS) {
+        // 连续错 3 次：整个面板冻结，只能由主人在聊天里发 #锅巴解冻
+        await this.accessFreezeService.freeze('登录密码连续输错 3 次', {
+          ip,
+          ua: req?.headers?.['user-agent'],
+        })
         await redis.del(passwordKey)
-        throw new GuobaError(`密码错误次数过多，请 ${formatLockWait(ttl)}后再试`)
+        const error = new GuobaError('登录密码错误次数过多，锅巴已冻结，请主人发送 #锅巴解冻 恢复')
+        error.frozen = true
+        throw error
       }
       await redis.expire(passwordKey, Constant.LOGIN_PASSWORD_ATTEMPT_WINDOW)
       throw new GuobaError('用户名或密码错误')
     }
-    await redis.del(passwordKey, lockKey, levelKey)
+    await redis.del(passwordKey)
     // 设备凭证有效就跳过验证码 —— IP 会漂，浏览器里那份不会
     const known = this.verifyDevice(req, false)
     if (!this.isTrusted(ip) && !known) {

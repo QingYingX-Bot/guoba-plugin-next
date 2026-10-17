@@ -111,6 +111,7 @@ const GUOBA_KEEP_FIELDS = [
   'jwt.secret',
   'auth.username',
   'auth.passwordHash',
+  'auth.gatePasswordHash',
   'auth.trustedIps',
   'auth.trustedDevices',
 ]

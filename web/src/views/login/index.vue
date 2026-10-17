@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Alert, Button, Input, Tooltip, message } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
-import { apiGetLoginStatus, apiRequestLoginCaptcha, apiRequestLoginCode } from '@/api'
+import { apiGetFrozenStatus, apiGetLoginStatus, apiRequestLoginCaptcha, apiRequestLoginCode } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { GUOBA_VERSION, ICP_NO } from '@/utils/env'
@@ -102,7 +102,19 @@ async function submitToken() {
   }
 }
 
-onMounted(loadStatus)
+onMounted(async () => {
+  // 面板被冻结时（登录 / 二级密码连错 3 次）直接切到冻结页
+  try {
+    const status = await apiGetFrozenStatus()
+    if (status.frozen) {
+      router.replace('/frozen')
+      return
+    }
+  } catch {
+    // 冻结状态查不到就按正常登录流程走
+  }
+  await loadStatus()
+})
 </script>
 
 <template>

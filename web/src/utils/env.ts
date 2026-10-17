@@ -46,6 +46,21 @@ export const ICP_NO: string = guobaConf.ICP_NO ?? ''
 /** localStorage 中保存 token 的键 */
 export const TOKEN_STORAGE_KEY = 'guoba:token'
 
+/** 二级密码解锁凭证的请求头字段名，与 server/constant/Constant.js 保持一致 */
+export const GATE_TOKEN_KEY: string = 'guoba-gate-token'
+
+/** 二级密码解锁凭证在 sessionStorage 里的键 */
+export const GATE_TOKEN_STORAGE_KEY = 'guoba:gate-token'
+
+/** 受保护接口被拦时的业务码，与后端 Constant 一致 */
+export const GATE_REQUIRED_CODE = 4231
+export const GATE_LOCKED_CODE = 4232
+/** 二级密码输错、登录会话被强制退出 */
+export const GATE_FAILED_CODE = 4233
+
+/** 面板被冻结（HTTP 423），与后端 Constant 一致 */
+export const FROZEN_CODE = 4230
+
 /** localStorage 中保存主题的键 */
 export const THEME_STORAGE_KEY = 'guoba:theme'
 

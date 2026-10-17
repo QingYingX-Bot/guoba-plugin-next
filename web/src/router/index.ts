@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import BasicLayout from '@/layouts/BasicLayout.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useGateStore } from '@/stores/gate'
 
 /**
  * 路由采用「静态路由 + 动态侧边栏」：
@@ -17,6 +18,13 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '登录', public: true },
   },
   {
+    // 面板冻结：登录 / 二级密码连错 3 次后整个面板停用
+    path: '/frozen',
+    name: 'Frozen',
+    component: () => import('@/views/frozen/index.vue'),
+    meta: { title: '已冻结', public: true },
+  },
+  {
     path: '/',
     component: BasicLayout,
     redirect: '/home',
@@ -26,6 +34,13 @@ const routes: RouteRecordRaw[] = [
         name: 'Home',
         component: () => import('@/views/home/index.vue'),
         meta: { title: '首页', icon: 'ant-design:home-outlined' },
+      },
+      {
+        // 二级密码锁屏。受保护页面未解锁、或输错次数过多被锁时都会跳到这
+        path: 'gate',
+        name: 'Gate',
+        component: () => import('@/views/gate/index.vue'),
+        meta: { title: '二级密码' },
       },
       {
         path: 'config',
@@ -43,37 +58,37 @@ const routes: RouteRecordRaw[] = [
         path: 'chat',
         name: 'Chat',
         component: () => import('@/views/chat/index.vue'),
-        meta: { title: '消息记录', icon: 'ant-design:message-outlined' },
+        meta: { title: '消息记录', icon: 'ant-design:message-outlined', gate: true },
       },
       {
         path: 'log',
         name: 'Log',
         component: () => import('@/views/log/index.vue'),
-        meta: { title: '运行日志', icon: 'ant-design:file-search-outlined' },
+        meta: { title: '运行日志', icon: 'ant-design:file-search-outlined', lockdown: true },
       },
       {
         path: 'sandbox',
         name: 'Sandbox',
         component: () => import('@/views/sandbox/index.vue'),
-        meta: { title: '沙盒', icon: 'ant-design:experiment-outlined' },
+        meta: { title: '沙盒', icon: 'ant-design:experiment-outlined', lockdown: true },
       },
       {
         path: 'data',
         name: 'Data',
         component: () => import('@/views/data/index.vue'),
-        meta: { title: '数据浏览', icon: 'ant-design:database-outlined' },
+        meta: { title: '数据浏览', icon: 'ant-design:database-outlined', gate: true },
       },
       {
         path: 'files',
         name: 'FileManager',
         component: () => import('@/views/files/index.vue'),
-        meta: { title: '文件管理', icon: 'ant-design:folder-outlined' },
+        meta: { title: '文件管理', icon: 'ant-design:folder-outlined', gate: true },
       },
       {
         path: 'terminal',
         name: 'Terminal',
         component: () => import('@/views/terminal/index.vue'),
-        meta: { title: '终端', icon: 'ant-design:code-outlined' },
+        meta: { title: '终端', icon: 'ant-design:code-outlined', gate: true },
       },
       {
         path: 'backup',
@@ -191,6 +206,25 @@ router.beforeEach(async (to) => {
   // 初始化令牌登录后还没设置账号密码，强制先去登录安全页设置
   if (!auth.configured && to.path !== '/account/security') {
     return { path: '/account/security' }
+  }
+
+  // 二级密码：受保护页面先核对状态，未解锁或被锁一律去锁屏页
+  if (to.meta?.gate || to.meta?.lockdown) {
+    const gate = useGateStore()
+    try {
+      await gate.check()
+    } catch {
+      // 状态拿不到时宁可要求输入，也不把受保护页面直接放出来
+      if (to.meta?.gate) {
+        return { path: '/gate', query: { redirect: to.fullPath } }
+      }
+    }
+    if (to.meta?.gate && gate.configured && !gate.unlocked) {
+      return { path: '/gate', query: { redirect: to.fullPath } }
+    }
+    if (to.meta?.lockdown && gate.locked) {
+      return { path: '/gate', query: { redirect: to.fullPath } }
+    }
   }
 
   return true

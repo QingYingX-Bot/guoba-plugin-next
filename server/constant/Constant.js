@@ -20,14 +20,34 @@ export default {
   LOGIN_CAPTCHA_MAX_ATTEMPTS: 5,
   LOGIN_CAPTCHA_LOCK_TTL: 900,
   LOGIN_PASSWORD_MAX_ATTEMPTS: 3,
-  // 第一档锁 10 分钟，同一 IP 再犯逐级翻倍（20/40/80…），最长 24 小时
-  LOGIN_PASSWORD_LOCK_TTL: 600,
-  LOGIN_PASSWORD_LOCK_MAX_TTL: 24 * 3600,
   // 失败次数的时间窗：15 分钟内累计不到 3 次就重新计数
   LOGIN_PASSWORD_ATTEMPT_WINDOW: 900,
-  // 升级等级保留 24 小时：期间没有再失败，下次回到第一档
-  LOGIN_PASSWORD_LEVEL_TTL: 24 * 3600,
   LOGIN_CAPTCHA_GLOBAL_LIMIT: 20,
+
+  // ---- 锅巴冻结 ----
+  // 登录密码或二级密码连续输错 3 次，整个面板冻结，
+  // 只能由主人在聊天里发送 #锅巴解冻 才能恢复
+  FREEZE_MAX_ATTEMPTS: 3,
+  // 冻结状态存在 redis 里，不设过期，靠 #锅巴解冻 解除
+  FROZEN_KEY: 'frozen',
+  // 冻结期间所有接口返回的业务码（HTTP 423）
+  FROZEN_CODE: 4230,
+
+  // ---- 二级密码（进入文件管理 / 数据浏览 / 终端 / 消息记录前再输一次）----
+  // 输错 3 次同样冻结整个锅巴（与登录密码共用 FREEZE_MAX_ATTEMPTS）
+  GATE_PASSWORD_ATTEMPT_WINDOW: 900,
+  // 解锁凭证有效期（秒）。浏览器会话里保存，一直用就一直续
+  GATE_UNLOCK_TTL: 12 * 3600,
+  // 剩余寿命低于这个值才续期，避免每个请求都写 redis
+  GATE_UNLOCK_RENEW_GAP: 3600,
+  // 前端放在请求头/query 里的解锁凭证字段名
+  GATE_TOKEN_KEY: 'guoba-gate-token',
+  // 需要解锁凭证的接口被拦时的业务码
+  GATE_REQUIRED_CODE: 4231,
+  // 被锁定时统一拒绝的业务码
+  GATE_LOCKED_CODE: 4232,
+  // 二级密码输错、登录会话已被强制退出时的业务码（HTTP 401）
+  GATE_FAILED_CODE: 4233,
 
   // 登录令牌有效期（秒）。
   // JWT 本身不带 exp，「登录失效」完全由 redis 里这条 key 的存活时间决定。

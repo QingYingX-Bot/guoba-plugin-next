@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import {autowired, Result} from '#guoba.framework';
-import {ApiController} from '#guoba.platform'
+import {ApiController, Constant} from '#guoba.platform'
 
 export class LoginController extends ApiController {
 
@@ -32,11 +32,19 @@ export class LoginController extends ApiController {
   }
 
   async login(req) {
-    const result = await this.loginSecurityService.login(req, req.body, this.loginService)
-    if (result?.captchaRequired) {
-      return Result.error(428, result, result.error, 428)
+    try {
+      const result = await this.loginSecurityService.login(req, req.body, this.loginService)
+      if (result?.captchaRequired) {
+        return Result.error(428, result, result.error, 428)
+      }
+      return Result.ok(result)
+    } catch (error) {
+      // 连续输错把整个面板冻结了：回 423，前端直接切到冻结页
+      if (error?.frozen) {
+        return new Result(Constant.FROZEN_CODE, {frozen: true}, error.message, 423)
+      }
+      throw error
     }
-    return Result.ok(result)
   }
 
   async captchaRequest(req) {

@@ -2,14 +2,18 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Table, Tag, Tooltip, message } from 'ant-design-vue'
 import {
+  apiClearGatePassword,
   apiClearTrustedDevices,
   apiClearTrustedIps,
+  apiGetGateStatus,
   apiGetLoginSecurity,
   apiRevokeTrustedDevice,
   apiRevokeTrustedIp,
+  apiSetGatePassword,
   apiSetLoginCredentials,
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { useGateStore } from '@/stores/gate'
 import {
   clearDeviceSecret,
   getDeviceId,
@@ -20,6 +24,7 @@ import {
 import type { LoginSecurity, TrustedDevice } from '@/types'
 
 const auth = useAuthStore()
+const gate = useGateStore()
 
 const loading = ref(true)
 /** 是否已完成过至少一次加载；用于区分首屏与刷新，避免刷新时拆掉布局 */
@@ -27,6 +32,11 @@ const hydrated = ref(false)
 const saving = ref(false)
 const security = ref<LoginSecurity>({ configured: false, username: '', trustedIps: [], trustedDevices: [] })
 const form = reactive({ username: '', currentPassword: '', password: '', confirmPassword: '' })
+
+/** 二级密码：是否已开启，以及开启/修改表单 */
+const gateConfigured = ref(false)
+const gateSaving = ref(false)
+const gateForm = reactive({ currentPassword: '', password: '', confirmPassword: '' })
 
 const devices = computed<TrustedDevice[]>(() => security.value.trustedDevices ?? [])
 /** 本机的设备 id，用来在列表里标出「本机」 */
@@ -38,9 +48,13 @@ async function load() {
   if (loading.value && hydrated.value) return
   loading.value = true
   try {
-    const next = await apiGetLoginSecurity()
+    const [next, gateStatus] = await Promise.all([
+      apiGetLoginSecurity(),
+      apiGetGateStatus().catch(() => null),
+    ])
     security.value = next
     form.username = next.username
+    if (gateStatus) gateConfigured.value = !!gateStatus.configured
   } finally {
     loading.value = false
     hydrated.value = true
@@ -90,6 +104,66 @@ async function save() {
     message.error(error?.message || '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+/** 开启或修改二级密码，需要当前登录密码 */
+async function saveGate() {
+  if (!gateForm.currentPassword) {
+    message.warning('请输入当前登录密码')
+    return
+  }
+  if (!gateForm.password) {
+    message.warning('请输入二级密码')
+    return
+  }
+  if (gateForm.password.length < 8 || gateForm.password.length > 128) {
+    message.warning('二级密码须为8至128位')
+    return
+  }
+  if (gateForm.password !== gateForm.confirmPassword) {
+    message.warning('两次输入的二级密码不一致')
+    return
+  }
+  if (gateForm.password === gateForm.currentPassword) {
+    message.warning('二级密码不能与登录密码相同')
+    return
+  }
+  gateSaving.value = true
+  try {
+    const res = await apiSetGatePassword({
+      currentPassword: gateForm.currentPassword,
+      password: gateForm.password,
+    })
+    gateConfigured.value = true
+    // 后端顺带发的解锁凭证：刚设置完不用马上再输一次
+    gate.acceptToken(res)
+    gateForm.password = ''
+    gateForm.confirmPassword = ''
+  } catch (error: any) {
+    message.error(error?.message || '保存失败')
+  } finally {
+    gateSaving.value = false
+  }
+}
+
+/** 关闭二级密码，需要当前登录密码 */
+async function clearGate() {
+  if (!gateForm.currentPassword) {
+    message.warning('请输入当前登录密码')
+    return
+  }
+  gateSaving.value = true
+  try {
+    await apiClearGatePassword(gateForm.currentPassword)
+    gateConfigured.value = false
+    gate.reset()
+    gateForm.password = ''
+    gateForm.confirmPassword = ''
+  } catch (error: any) {
+    message.error(error?.message || '关闭失败')
+  } finally {
+    gateSaving.value = false
   }
 }
 
@@ -191,6 +265,44 @@ onMounted(load)
           </FormItem>
         </div>
         <Button type="primary" :loading="saving" @click="save">保存登录凭证</Button>
+      </Form>
+    </Card>
+
+    <Card :bordered="false" class="g-sec-gate">
+      <template #title>
+        二级密码
+        <Tag :color="gateConfigured ? 'green' : 'default'" class="g-sec-tag">
+          {{ gateConfigured ? '已开启' : '未开启' }}
+        </Tag>
+      </template>
+      <p class="g-sec-tip">
+        开启后，进入文件管理、数据浏览、终端和消息记录要再输入一次二级密码；
+        连续输错 3 次锁定 10 分钟，再犯逐级翻倍，锁定期间沙盒和运行日志也一并锁住。
+      </p>
+      <Form layout="vertical" class="g-sec-form">
+        <div class="g-sec-grid is-configured">
+          <FormItem label="当前登录密码" required>
+            <Input.Password v-model:value="gateForm.currentPassword" autocomplete="current-password" />
+          </FormItem>
+          <FormItem :label="gateConfigured ? '新二级密码' : '二级密码'" required>
+            <Input.Password
+              v-model:value="gateForm.password"
+              placeholder="8 位或以上"
+              autocomplete="new-password"
+            />
+          </FormItem>
+          <FormItem label="确认二级密码" required>
+            <Input.Password v-model:value="gateForm.confirmPassword" autocomplete="new-password" />
+          </FormItem>
+        </div>
+        <div class="g-sec-actions">
+          <Button type="primary" :loading="gateSaving" @click="saveGate">
+            {{ gateConfigured ? '保存二级密码' : '开启二级密码' }}
+          </Button>
+          <Popconfirm v-if="gateConfigured" title="确定关闭二级密码？" @confirm="clearGate">
+            <Button danger :disabled="gateSaving">关闭二级密码</Button>
+          </Popconfirm>
+        </div>
       </Form>
     </Card>
 
@@ -326,6 +438,16 @@ onMounted(load)
 
 .g-sec-cred {
   margin-bottom: 16px;
+}
+
+.g-sec-gate {
+  margin-bottom: 16px;
+}
+
+.g-sec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .g-sec-devs {
