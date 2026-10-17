@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import { autowired, Service, GuobaError } from '#guoba.framework'
 import { cfg, Constant } from '#guoba.platform'
-import { randomString } from '#guoba.utils'
+import { randomString, sendToOneMaster } from '#guoba.utils'
 import { getClientIp, normalizeClientIp } from '../../utils/clientIp.js'
 import { hashPassword, validatePassword, validateUsername, verifyPassword } from '../../utils/passwordHash.js'
 
@@ -81,10 +81,19 @@ export class LoginSecurityService extends Service {
   resetCredentials() {
     cfg.set('auth.username', '')
     cfg.set('auth.passwordHash', '')
+    // 登录凭证都重置了，二级密码一起清掉；否则验证码登录后会被二级密码
+    // 挡在设置页外面，形成死锁
+    cfg.set('auth.gatePasswordHash', '')
     cfg.set('auth.trustedIps', [])
     cfg.set('auth.trustedDevices', [])
-    // 连密码错误的计数一起清掉 —— 主人正是在被锁/冻结的时候才会来重置
+    // 连密码错误的计数一起清掉
     this.#clearPasswordAttempts()
+    // 所有面板登录会话和二级密码解锁凭证作废
+    try {
+      Promise.resolve(this.accessFreezeService.clearSessions()).catch(() => {})
+    } catch {
+      // 清理失败不影响重置本身
+    }
   }
 
   /** 清掉所有 IP 的密码失败计数 */
@@ -325,18 +334,58 @@ export class LoginSecurityService extends Service {
       return true
     }
     const attempts = await redis.incr(passwordKey)
-    if (attempts >= Constant.FREEZE_MAX_ATTEMPTS) {
-      await this.accessFreezeService.freeze('登录密码连续输错 3 次', {
-        ip,
-        ua: req?.headers?.['user-agent'],
-      })
+    if (attempts >= Constant.LOGIN_PASSWORD_MAX_ATTEMPTS) {
       await redis.del(passwordKey)
-      const error = new GuobaError('登录密码错误次数过多，锅巴已冻结，请主人发送 #锅巴解冻 恢复')
-      error.frozen = true
-      throw error
+      await this.handleTooManyPasswordFailures(req)
     }
     await redis.expire(passwordKey, Constant.LOGIN_PASSWORD_ATTEMPT_WINDOW)
     throw new GuobaError('登录密码错误')
+  }
+
+  /**
+   * 登录密码连续输错 3 次：重置登录凭证，之后必须用验证码重新登录。
+   *
+   * 不冻结面板：面板保持可用，但登录入口回到“未初始化”状态，
+   * 验证码只私聊发给主人，别人无法继续尝试。
+   */
+  async handleTooManyPasswordFailures(req) {
+    const ip = getClientIp(req)
+    this.resetCredentials()
+    if (ip) await redis.del(this.passwordAttemptsKey(ip))
+    try {
+      await this.accessFreezeService.clearSessions()
+    } catch (error) {
+      logger.error('[Guoba] 登录凭证重置后清理会话失败')
+      logger.error(error)
+    }
+    this.#notifyCredentialsReset(req, ip)
+    const error = new GuobaError('登录密码错误次数过多，登录凭证已重置，请使用验证码重新登录')
+    error.credentialsReset = true
+    throw error
+  }
+
+  /** 登录凭证被重置时私聊通知主人 */
+  #notifyCredentialsReset(req, ip) {
+    try {
+      const now = new Date()
+      const pad = (value) => String(value).padStart(2, '0')
+      const time = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
+        + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+      const lines = [
+        '[锅巴面板] 登录密码连续输错 3 次，登录凭证已重置。',
+        `时间：${time}`,
+        `来源 IP：${ip || '未知'}`,
+      ]
+      const ua = req?.headers?.['user-agent']
+      if (typeof ua === 'string' && ua) {
+        lines.push(`设备：${ua.length > 160 ? ua.slice(0, 160) + '…' : ua}`)
+      }
+      lines.push('请打开面板使用验证码重新登录，并设置新的账号密码。')
+      Promise.resolve(sendToOneMaster(lines.join('\n'))).catch(() => {})
+    } catch (error) {
+      logger.error('[Guoba] 登录凭证重置通知发送失败')
+      logger.error(error)
+    }
   }
 
   async login(req, body, loginService) {
@@ -351,16 +400,10 @@ export class LoginSecurityService extends Service {
     if (!validateUsername(username) || !validatePassword(password)
       || username !== this.auth.username || !verifyPassword(password, this.auth.passwordHash)) {
       const attempts = await redis.incr(passwordKey)
-      if (attempts >= Constant.FREEZE_MAX_ATTEMPTS) {
-        // 连续错 3 次：整个面板冻结，只能由主人在聊天里发 #锅巴解冻
-        await this.accessFreezeService.freeze('登录密码连续输错 3 次', {
-          ip,
-          ua: req?.headers?.['user-agent'],
-        })
+      if (attempts >= Constant.LOGIN_PASSWORD_MAX_ATTEMPTS) {
+        // 连续错 3 次：重置登录凭证，之后只能靠验证码重新登录
         await redis.del(passwordKey)
-        const error = new GuobaError('登录密码错误次数过多，锅巴已冻结，请主人发送 #锅巴解冻 恢复')
-        error.frozen = true
-        throw error
+        await this.handleTooManyPasswordFailures(req)
       }
       await redis.expire(passwordKey, Constant.LOGIN_PASSWORD_ATTEMPT_WINDOW)
       throw new GuobaError('用户名或密码错误')

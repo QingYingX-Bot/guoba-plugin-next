@@ -72,9 +72,9 @@ export class GuobaLogin extends plugin {
     }
     this.loginSecurityService.resetCredentials()
     return this.reply(
-      '登录凭证已重置，账号密码、可信IP和可信设备已清空。\n'
+      '登录凭证已重置，账号密码、二级密码、可信IP和可信设备已清空。\n'
       + '发送“#锅巴登录”获取登录地址，在登录页点“获取登录令牌”，'
-      + '登录后在“账号管理 - 登录安全”里重新设置账号密码。'
+      + '登录后重新设置账号密码和二级密码。'
     )
   }
 

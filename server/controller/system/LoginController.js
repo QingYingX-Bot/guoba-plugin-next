@@ -39,7 +39,11 @@ export class LoginController extends ApiController {
       }
       return Result.ok(result)
     } catch (error) {
-      // 连续输错把整个面板冻结了：回 423，前端直接切到冻结页
+      // 登录密码连错 3 次：凭证已被重置，回专用业务码让前端切到验证码登录
+      if (error?.credentialsReset) {
+        return new Result(Constant.CREDENTIALS_RESET_CODE, {credentialsReset: true}, error.message)
+      }
+      // 二级密码错误导致的面板冻结
       if (error?.frozen) {
         return new Result(Constant.FROZEN_CODE, {frozen: true}, error.message, 423)
       }

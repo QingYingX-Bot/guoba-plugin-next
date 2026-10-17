@@ -25,13 +25,15 @@ export default {
   LOGIN_CAPTCHA_GLOBAL_LIMIT: 20,
 
   // ---- 锅巴冻结 ----
-  // 登录密码或二级密码连续输错 3 次，整个面板冻结，
+  // 二级密码连续输错 3 次，整个面板冻结，
   // 只能由主人在聊天里发送 #锅巴解冻 才能恢复
   FREEZE_MAX_ATTEMPTS: 3,
   // 冻结状态存在 redis 里，不设过期，靠 #锅巴解冻 解除
   FROZEN_KEY: 'frozen',
   // 冻结期间所有接口返回的业务码（HTTP 423）
   FROZEN_CODE: 4230,
+  // 登录密码连错 3 次：登录凭证被重置，前端据此切到验证码登录
+  CREDENTIALS_RESET_CODE: 4234,
 
   // ---- 二级密码（进入文件管理 / 数据浏览 / 终端 / 消息记录前再输一次）----
   // 输错 3 次同样冻结整个锅巴（与登录密码共用 FREEZE_MAX_ATTEMPTS）

@@ -32,6 +32,10 @@ export class AccessGateController extends ApiController {
     try {
       return Result.ok(await this.accessGateService.unlock(req, req.body), '已解锁')
     } catch (error) {
+      // 登录密码输错到阈值：登录凭证已被重置，前端切回登录页走验证码
+      if (error?.credentialsReset) {
+        return new Result(Constant.CREDENTIALS_RESET_CODE, { credentialsReset: true }, error.message)
+      }
       // 连续输错触发冻结：回 423，前端直接切到冻结页
       if (error?.frozen) {
         return new Result(Constant.FROZEN_CODE, { frozen: true }, error.message, 423)

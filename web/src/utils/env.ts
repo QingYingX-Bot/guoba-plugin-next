@@ -59,6 +59,9 @@ export const GATE_LOCKED_CODE = 4232
 /** 二级密码输错、登录会话被强制退出 */
 export const GATE_FAILED_CODE = 4233
 
+/** 登录密码连错 3 次，登录凭证已被重置 */
+export const CREDENTIALS_RESET_CODE = 4234
+
 /** 面板被冻结（HTTP 423），与后端 Constant 一致 */
 export const FROZEN_CODE = 4230
 

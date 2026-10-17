@@ -6,7 +6,7 @@ import GIcon from '@/components/GIcon.vue'
 import { apiGetFrozenStatus, apiGetLoginStatus, apiRequestLoginCaptcha, apiRequestLoginCode } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
-import { GUOBA_VERSION, ICP_NO } from '@/utils/env'
+import { CREDENTIALS_RESET_CODE, GUOBA_VERSION, ICP_NO } from '@/utils/env'
 
 const auth = useAuthStore()
 const appStore = useAppStore()
@@ -65,6 +65,11 @@ async function submit() {
   } catch (error: any) {
     if (error?.status === 428 || error?.code === 428) captchaRequired.value = true
     message.error(error?.message || '登录失败')
+    // 连错 3 次已被重置：刷新状态，页面会自动切到验证码登录
+    if (error?.code === CREDENTIALS_RESET_CODE) {
+      password.value = ''
+      await loadStatus()
+    }
   } finally {
     loading.value = false
   }

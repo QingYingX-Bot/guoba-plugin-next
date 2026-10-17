@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Button, Input, Spin, message } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
 import { apiResetGatePassword } from '@/api'
+import { CREDENTIALS_RESET_CODE } from '@/utils/env'
 import { useGateStore } from '@/stores/gate'
 
 /**
@@ -119,6 +120,12 @@ async function submitReset() {
     resetForm.confirmPassword = ''
     message.success('二级密码已重置，请用新密码解锁')
   } catch (error: any) {
+    // 登录密码输错到阈值：登录凭证已被重置，回登录页走验证码
+    if (error?.code === CREDENTIALS_RESET_CODE) {
+      message.error(error?.message || '登录凭证已重置，请使用验证码重新登录')
+      router.replace('/login')
+      return
+    }
     resetError.value = error?.message || '重置失败'
   } finally {
     resetting.value = false
