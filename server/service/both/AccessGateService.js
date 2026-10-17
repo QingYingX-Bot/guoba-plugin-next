@@ -222,19 +222,15 @@ export class AccessGateService extends Service {
   }
 
   /** 设置或修改二级密码，需要验证当前登录密码 */
-  async setPassword(currentPassword, password, req) {
+  async setPassword(currentPassword, password) {
     if (!this.loginConfigured) throw new GuobaError('请先设置登录账号密码')
     if (!verifyPassword(currentPassword, this.auth.passwordHash)) throw new GuobaError('登录密码错误')
     if (!validatePassword(password)) throw new GuobaError('二级密码须为8至128位')
     if (verifyPassword(password, this.auth.passwordHash)) throw new GuobaError('二级密码不能与登录密码相同')
     cfg.set('auth.gatePasswordHash', hashPassword(password))
     await this.#clearAll()
-    // 设置者本人刚验证过登录密码，直接发一张解锁凭证，不用马上再输一次
-    const loginToken = this.getLoginToken(req)
-    if (!loginToken) throw new GuobaError('登录态失效')
-    const gateToken = crypto.randomBytes(32).toString('hex')
-    await redis.set(this.gateTokenKey(gateToken), sha256(loginToken), { EX: Constant.GATE_UNLOCK_TTL })
-    return { configured: true, unlocked: true, locked: false, lockSeconds: 0, gateToken }
+    // 设置完不给当前会话发解锁凭证：下一次进入敏感页面必须真正输入二级密码
+    return { configured: true, unlocked: false, locked: false, lockSeconds: 0 }
   }
 
   /** 关闭二级密码，需要验证当前登录密码 */

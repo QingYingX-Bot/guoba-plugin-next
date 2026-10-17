@@ -1,21 +1,54 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { Layout, LayoutContent, LayoutSider } from 'ant-design-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Layout, LayoutContent, LayoutSider, Modal } from 'ant-design-vue'
 import SideMenu from './components/SideMenu.vue'
 import LayoutHeader from './components/LayoutHeader.vue'
 import { useAppStore } from '@/stores/app'
+import { useGateStore } from '@/stores/gate'
 import { GUOBA_VERSION, ICP_NO } from '@/utils/env'
 
 const appStore = useAppStore()
+const gate = useGateStore()
 const route = useRoute()
+const router = useRouter()
+
+/** 本次浏览器会话已经提醒过设置二级密码 */
+const GATE_TIP_KEY = 'guoba:gate-tip-shown'
 
 const isMobile = computed(() => appStore.isMobile)
 // 窄屏抽屉里始终展示完整菜单，收窄态只在宽屏生效
 const collapsed = computed(() => !isMobile.value && appStore.sidebarCollapsed)
 const siderWidth = computed(() => (isMobile.value ? 232 : 220))
 
-onMounted(() => appStore.setupResponsive())
+/**
+ * 还没设置二级密码时提醒一次。
+ *
+ * 二级密码是选填项，未设置时四个敏感页面是直接放行的，
+ * 不提醒的话很容易以为这套保护已经生效了。
+ */
+async function promptGateSetup() {
+  try {
+    await gate.check()
+  } catch {
+    return
+  }
+  if (gate.configured) return
+  if (sessionStorage.getItem(GATE_TIP_KEY)) return
+  sessionStorage.setItem(GATE_TIP_KEY, '1')
+  Modal.confirm({
+    title: '尚未设置二级密码',
+    content: '开启后，进入文件管理、数据浏览、终端和消息记录需要再验证一次。现在去设置吗？',
+    okText: '去设置',
+    cancelText: '稍后再说',
+    onOk: () => router.push('/account/security'),
+  })
+}
+
+onMounted(() => {
+  appStore.setupResponsive()
+  void promptGateSetup()
+})
 
 // 窄屏点菜单跳转后顺手收起抽屉
 watch(() => route.fullPath, () => {

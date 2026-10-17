@@ -46,7 +46,7 @@ export class AccessGateController extends ApiController {
   async setPassword(req) {
     const { currentPassword, password } = req.body ?? {}
     return Result.ok(
-      await this.accessGateService.setPassword(currentPassword, password, req),
+      await this.accessGateService.setPassword(currentPassword, password),
       '二级密码已保存',
     )
   }

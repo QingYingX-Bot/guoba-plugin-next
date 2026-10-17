@@ -57,15 +57,14 @@ export const useGateStore = defineStore('gate', () => {
     return data
   }
 
-  /** 设置/修改二级密码后，服务端会顺带发一张解锁凭证 */
-  function acceptToken(data: { gateToken?: string } | null | undefined) {
-    if (data?.gateToken) {
-      setGateToken(data.gateToken)
-      unlocked.value = true
-      locked.value = false
-      lockSeconds.value = 0
-    }
+  /** 设置/修改二级密码后锁上当前会话：下次进入敏感页面要重新输入 */
+  function lockNow() {
+    setGateToken('')
     configured.value = true
+    unlocked.value = false
+    locked.value = false
+    lockSeconds.value = 0
+    checked.value = true
   }
 
   /** 收到后端 403 时同步本地状态 */
@@ -98,7 +97,7 @@ export const useGateStore = defineStore('gate', () => {
     gateToken,
     check,
     unlock,
-    acceptToken,
+    lockNow,
     applyBlocked,
     reset,
   }

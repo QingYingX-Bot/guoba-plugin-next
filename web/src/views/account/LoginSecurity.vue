@@ -131,13 +131,13 @@ async function saveGate() {
   }
   gateSaving.value = true
   try {
-    const res = await apiSetGatePassword({
+    await apiSetGatePassword({
       currentPassword: gateForm.currentPassword,
       password: gateForm.password,
     })
     gateConfigured.value = true
-    // 后端顺带发的解锁凭证：刚设置完不用马上再输一次
-    gate.acceptToken(res)
+    // 设置完立即锁上：进入敏感页面必须重新输入一次二级密码
+    gate.lockNow()
     gateForm.password = ''
     gateForm.confirmPassword = ''
   } catch (error: any) {

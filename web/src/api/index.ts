@@ -93,7 +93,7 @@ export const apiGateUnlock = (password: string) =>
   post<{ gateToken: string }>('/gate/unlock', { password }, { showError: false })
 
 export const apiSetGatePassword = (body: { currentPassword: string; password: string }) =>
-  put<GateStatus & { gateToken?: string }>('/gate/password', body, { showSuccess: true })
+  put<GateStatus>('/gate/password', body, { showSuccess: true })
 
 export const apiClearGatePassword = (currentPassword: string) =>
   del<GateStatus>('/gate/password', { currentPassword }, { showSuccess: true })
