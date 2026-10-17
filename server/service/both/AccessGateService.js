@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import { autowired, GuobaError, Service } from '#guoba.framework'
 import { cfg, Constant } from '#guoba.platform'
-import { sendToOneMaster } from '#guoba.utils'
+import { sendToMasterUser, sendToOneMaster } from '#guoba.utils'
 import { getClientIp } from '../../utils/clientIp.js'
 import { hashPassword, validatePassword, verifyPassword } from '../../utils/passwordHash.js'
 
@@ -173,7 +173,12 @@ export class AccessGateService extends Service {
       if (typeof ua === 'string' && ua) {
         lines.push(`设备：${ua.length > 160 ? ua.slice(0, 160) + '…' : ua}`)
       }
-      Promise.resolve(sendToOneMaster(lines.join('\n'))).catch(() => {})
+      const message = lines.join('\n')
+      const target = cfg.get('auth.securityMaster')
+      // 指定了安全通知接收人时只发给他，发送失败也不改发其他主人
+      Promise.resolve(target
+        ? sendToMasterUser(message, target)
+        : sendToOneMaster(message)).catch(() => {})
     } catch (error) {
       // 通知失败只记日志，不能影响「输错就踢」本身的流程
       logger.error('[Guoba] 二级密码错误通知发送失败')
@@ -225,9 +230,9 @@ export class AccessGateService extends Service {
   }
 
   /** 设置或修改二级密码，需要验证当前登录密码 */
-  async setPassword(currentPassword, password) {
+  async setPassword(currentPassword, password, req) {
     if (!this.loginConfigured) throw new GuobaError('请先设置登录账号密码')
-    if (!verifyPassword(currentPassword, this.auth.passwordHash)) throw new GuobaError('登录密码错误')
+    await this.loginSecurityService.verifyPasswordForSensitiveAction(req, currentPassword)
     if (!validatePassword(password)) throw new GuobaError('二级密码须为8至128位')
     if (verifyPassword(password, this.auth.passwordHash)) throw new GuobaError('二级密码不能与登录密码相同')
     cfg.set('auth.gatePasswordHash', hashPassword(password))
@@ -237,9 +242,9 @@ export class AccessGateService extends Service {
   }
 
   /** 关闭二级密码，需要验证当前登录密码 */
-  async clearPassword(currentPassword) {
+  async clearPassword(currentPassword, req) {
     if (!this.loginConfigured) throw new GuobaError('请先设置登录账号密码')
-    if (!verifyPassword(currentPassword, this.auth.passwordHash)) throw new GuobaError('登录密码错误')
+    await this.loginSecurityService.verifyPasswordForSensitiveAction(req, currentPassword)
     cfg.set('auth.gatePasswordHash', '')
     await this.#clearAll()
     return { configured: false, unlocked: true, locked: false, lockSeconds: 0 }

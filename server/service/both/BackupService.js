@@ -112,6 +112,7 @@ const GUOBA_KEEP_FIELDS = [
   'auth.username',
   'auth.passwordHash',
   'auth.gatePasswordHash',
+  'auth.securityMaster',
   'auth.trustedIps',
   'auth.trustedDevices',
 ]

@@ -1,6 +1,6 @@
 import { Service } from '#guoba.framework'
-import { Constant } from '#guoba.platform'
-import { sendToOneMaster } from '#guoba.utils'
+import { cfg, Constant } from '#guoba.platform'
+import { sendToMasterUser, sendToOneMaster } from '#guoba.utils'
 import {
   closeExistingWebSockets,
   installPortGuard,
@@ -152,7 +152,12 @@ export class AccessFreezeService extends Service {
       ]
       if (info.ua) lines.push(`设备：${info.ua}`)
       lines.push('解除：私聊机器人发送 #锅巴解冻')
-      Promise.resolve(sendToOneMaster(lines.join('\n'))).catch(() => {})
+      const message = lines.join('\n')
+      const target = cfg.get('auth.securityMaster')
+      // 指定了安全通知接收人时只发给他，发送失败也不改发其他主人
+      Promise.resolve(target
+        ? sendToMasterUser(message, target)
+        : sendToOneMaster(message)).catch(() => {})
     } catch (error) {
       // 通知失败只记日志，不能影响冻结本身
       logger.error('[Guoba] 冻结通知发送失败')

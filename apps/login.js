@@ -58,9 +58,16 @@ export class GuobaLogin extends plugin {
     }
   }
 
+  /** 配置了安全通知接收人时，解冻 / 重置只接受这个人 */
+  isSecurityMaster () {
+    const target = cfg.get('auth.securityMaster')
+    if (!target) return true
+    return String(this.e.user_id) === String(target)
+  }
+
   async resetLogin () {
-    // 只认私聊，避免群里伪造主人事件就能清空面板凭证
-    if (!this.e.isMaster || !this.e.isPrivate) return false
+    // 只认私聊 + 配置的安全通知接收人，避免别的主人清空面板凭证
+    if (!this.e.isMaster || !this.e.isPrivate || !this.isSecurityMaster()) return false
     let configured
     try {
       configured = this.loginSecurityService.configured
@@ -78,10 +85,10 @@ export class GuobaLogin extends plugin {
     )
   }
 
-  /** 解除面板冻结（登录密码 / 二级密码连错 3 次引起） */
+  /** 解除面板冻结（二级密码连错 3 次引起） */
   async unfreeze () {
-    // 只认私聊：群里任何人都能伪造一条「主人发的」事件，不能给他们解冻的机会
-    if (!this.e.isMaster || !this.e.isPrivate) return false
+    // 只认私聊 + 配置的安全通知接收人，避免别的主人解冻
+    if (!this.e.isMaster || !this.e.isPrivate || !this.isSecurityMaster()) return false
     let existed
     try {
       existed = await this.freezeService.unfreeze()

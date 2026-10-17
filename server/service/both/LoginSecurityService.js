@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import { autowired, Service, GuobaError } from '#guoba.framework'
 import { cfg, Constant } from '#guoba.platform'
-import { randomString, sendToOneMaster } from '#guoba.utils'
+import { getRealMasterList, randomString, sendToMasterUser, sendToOneMaster } from '#guoba.utils'
 import { getClientIp, normalizeClientIp } from '../../utils/clientIp.js'
 import { hashPassword, validatePassword, validateUsername, verifyPassword } from '../../utils/passwordHash.js'
 
@@ -55,12 +55,13 @@ export class LoginSecurityService extends Service {
     }
   }
 
-  setCredentials(username, password, currentPassword = '', req = null) {
+  async setCredentials(username, password, currentPassword = '', req = null) {
     username = typeof username === 'string' ? username.trim() : ''
     if (!validateUsername(username)) throw new GuobaError('用户名长度必须为1至64位')
     if (!validatePassword(password)) throw new GuobaError('密码须为8至128位')
-    if (this.configured && !verifyPassword(currentPassword, this.auth.passwordHash)) {
-      throw new GuobaError('当前密码错误')
+    // 已配置时改密码必须验证当前密码，失败同样计入连错次数
+    if (this.configured) {
+      await this.verifyPasswordForSensitiveAction(req, currentPassword)
     }
     cfg.set('auth.username', username)
     cfg.set('auth.passwordHash', hashPassword(password))
@@ -323,7 +324,7 @@ export class LoginSecurityService extends Service {
 
   /**
    * 敏感操作（比如忘记二级密码时的重置）验证登录密码。
-   * 失败同样计入登录密码错误次数，连错 3 次也会冻结整个面板。
+   * 失败同样计入登录密码错误次数，连错 3 次会重置登录凭证并转验证码登录。
    */
   async verifyPasswordForSensitiveAction(req, password) {
     const ip = getClientIp(req)
@@ -381,7 +382,12 @@ export class LoginSecurityService extends Service {
         lines.push(`设备：${ua.length > 160 ? ua.slice(0, 160) + '…' : ua}`)
       }
       lines.push('请打开面板使用验证码重新登录，并设置新的账号密码。')
-      Promise.resolve(sendToOneMaster(lines.join('\n'))).catch(() => {})
+      const message = lines.join('\n')
+      const target = cfg.get('auth.securityMaster')
+      // 指定了安全通知接收人时只发给他，发送失败也不改发其他主人
+      Promise.resolve(target
+        ? sendToMasterUser(message, target)
+        : sendToOneMaster(message)).catch(() => {})
     } catch (error) {
       logger.error('[Guoba] 登录凭证重置通知发送失败')
       logger.error(error)
@@ -430,10 +436,42 @@ export class LoginSecurityService extends Service {
     return {
       configured: this.configured,
       username: this.configured ? this.auth.username : '',
+      securityMaster: typeof this.auth.securityMaster === 'string' ? this.auth.securityMaster : '',
       trustedIps: this.getTrustedIpRecords(),
       // 不返回 secretHash，面板上只需要看得出是哪台、什么时候用过
       trustedDevices: this.getTrustedDevices().map(({secretHash, ...rest}) => rest),
     }
+  }
+
+  /** 主人列表（去重）：给「安全通知接收人」下拉框用 */
+  async listMasters() {
+    const seen = new Set()
+    const list = []
+    for (const {userId, botId} of await getRealMasterList()) {
+      const id = String(userId)
+      if (seen.has(id)) continue
+      seen.add(id)
+      list.push({userId: id, botId: botId == null ? null : String(botId)})
+    }
+    return list
+  }
+
+  /**
+   * 设置安全通知接收人。
+   * 冻结、登录失败重置、二级密码输错的通知只发给他，验证码也只发给他，
+   * #锅巴解冻 / #锅巴重置密码 也只接受他。
+   */
+  async setSecurityMaster(currentPassword, userId, req) {
+    await this.verifyPasswordForSensitiveAction(req, currentPassword)
+    const target = String(userId ?? '').trim()
+    if (target) {
+      const masters = await getRealMasterList()
+      if (!masters.some(m => String(m.userId) === target)) {
+        throw new GuobaError('该账号不在主人列表中')
+      }
+    }
+    cfg.set('auth.securityMaster', target)
+    return this.getSecurity()
   }
 
   revokeIp(ip) {

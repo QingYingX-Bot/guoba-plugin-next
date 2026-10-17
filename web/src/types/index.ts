@@ -131,6 +131,8 @@ export interface TrustedDevice {
 export interface LoginSecurity {
   configured: boolean
   username: string
+  /** 安全通知接收人：冻结/重置通知、验证码、解冻指令都只认他；空 = 全部主人 */
+  securityMaster?: string
   trustedIps: TrustedIp[]
   trustedDevices?: TrustedDevice[]
 }

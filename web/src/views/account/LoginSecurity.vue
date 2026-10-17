@@ -1,19 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Table, Tag, Tooltip, message } from 'ant-design-vue'
+import { useRouter } from 'vue-router'
+import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Select, Table, Tag, Tooltip, message } from 'ant-design-vue'
 import {
   apiClearGatePassword,
   apiClearTrustedDevices,
   apiClearTrustedIps,
   apiGetGateStatus,
   apiGetLoginSecurity,
+  apiGetMasterList,
   apiRevokeTrustedDevice,
   apiRevokeTrustedIp,
   apiSetGatePassword,
   apiSetLoginCredentials,
+  apiSetSecurityMaster,
+  type MasterUser,
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useGateStore } from '@/stores/gate'
+import { CREDENTIALS_RESET_CODE } from '@/utils/env'
 import {
   clearDeviceSecret,
   getDeviceId,
@@ -25,6 +30,7 @@ import type { LoginSecurity, TrustedDevice } from '@/types'
 
 const auth = useAuthStore()
 const gate = useGateStore()
+const router = useRouter()
 
 const loading = ref(true)
 /** 是否已完成过至少一次加载；用于区分首屏与刷新，避免刷新时拆掉布局 */
@@ -38,6 +44,11 @@ const gateConfigured = ref(false)
 const gateSaving = ref(false)
 const gateForm = reactive({ currentPassword: '', password: '', confirmPassword: '' })
 
+/** 安全通知接收人：冻结/重置通知、验证码、解冻指令都只认他 */
+const masters = ref<MasterUser[]>([])
+const notifySaving = ref(false)
+const notifyForm = reactive({ userId: '', currentPassword: '' })
+
 const devices = computed<TrustedDevice[]>(() => security.value.trustedDevices ?? [])
 /** 本机的设备 id，用来在列表里标出「本机」 */
 const myDeviceId = getDeviceId()
@@ -48,17 +59,28 @@ async function load() {
   if (loading.value && hydrated.value) return
   loading.value = true
   try {
-    const [next, gateStatus] = await Promise.all([
+    const [next, gateStatus, masterList] = await Promise.all([
       apiGetLoginSecurity(),
       apiGetGateStatus().catch(() => null),
+      apiGetMasterList().catch(() => []),
     ])
     security.value = next
     form.username = next.username
     if (gateStatus) gateConfigured.value = !!gateStatus.configured
+    masters.value = Array.isArray(masterList) ? masterList : []
+    notifyForm.userId = next.securityMaster ?? ''
   } finally {
     loading.value = false
     hydrated.value = true
   }
+}
+
+/** 登录密码连错到阈值时后端会重置凭证，这里统一回登录页 */
+function handleCredentialsReset(error: any): boolean {
+  if (error?.code !== CREDENTIALS_RESET_CODE) return false
+  message.error(error?.message || '登录凭证已重置，请使用验证码重新登录')
+  router.replace('/login')
+  return true
 }
 
 async function save() {
@@ -101,6 +123,7 @@ async function save() {
     message.success('登录凭证已保存')
     await load()
   } catch (error: any) {
+    if (handleCredentialsReset(error)) return
     message.error(error?.message || '保存失败')
   } finally {
     saving.value = false
@@ -141,6 +164,7 @@ async function saveGate() {
     gateForm.password = ''
     gateForm.confirmPassword = ''
   } catch (error: any) {
+    if (handleCredentialsReset(error)) return
     message.error(error?.message || '保存失败')
   } finally {
     gateSaving.value = false
@@ -161,9 +185,33 @@ async function clearGate() {
     gateForm.password = ''
     gateForm.confirmPassword = ''
   } catch (error: any) {
+    if (handleCredentialsReset(error)) return
     message.error(error?.message || '关闭失败')
   } finally {
     gateSaving.value = false
+  }
+}
+
+/** 保存安全通知接收人，需要当前登录密码 */
+async function saveNotifyMaster() {
+  if (!notifyForm.currentPassword) {
+    message.warning('请输入当前登录密码')
+    return
+  }
+  notifySaving.value = true
+  try {
+    const next = await apiSetSecurityMaster({
+      currentPassword: notifyForm.currentPassword,
+      userId: notifyForm.userId ?? '',
+    })
+    security.value = { ...security.value, ...next }
+    notifyForm.userId = next.securityMaster ?? ''
+    notifyForm.currentPassword = ''
+  } catch (error: any) {
+    if (handleCredentialsReset(error)) return
+    message.error(error?.message || '保存失败')
+  } finally {
+    notifySaving.value = false
   }
 }
 
@@ -306,6 +354,31 @@ onMounted(load)
       </Form>
     </Card>
 
+    <Card :bordered="false" class="g-sec-notify">
+      <template #title>安全通知</template>
+      <p class="g-sec-tip">
+        冻结、登录失败重置、二级密码输错等通知只发给这个主人；登录验证码也只发给他；
+        #锅巴解冻 与 #锅巴重置密码 也只接受这个主人。留空则沿用默认（通知全部主人）。
+      </p>
+      <Form layout="vertical" class="g-sec-form">
+        <div class="g-sec-grid is-configured">
+          <FormItem label="通知接收人">
+            <Select
+              v-model:value="notifyForm.userId"
+              allow-clear
+              show-search
+              placeholder="留空 = 全部主人"
+              :options="masters.map(m => ({ value: m.userId, label: m.userId }))"
+            />
+          </FormItem>
+          <FormItem label="当前登录密码" required>
+            <Input.Password v-model:value="notifyForm.currentPassword" autocomplete="current-password" />
+          </FormItem>
+        </div>
+        <Button type="primary" :loading="notifySaving" @click="saveNotifyMaster">保存安全通知设置</Button>
+      </Form>
+    </Card>
+
     <Card :bordered="false" class="g-sec-devs">
       <template #title>可信设备</template>
       <template #extra>
@@ -441,6 +514,10 @@ onMounted(load)
 }
 
 .g-sec-gate {
+  margin-bottom: 16px;
+}
+
+.g-sec-notify {
   margin-bottom: 16px;
 }
 

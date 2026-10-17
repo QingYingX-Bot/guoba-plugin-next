@@ -28,6 +28,21 @@ export const apiRequestLoginCaptcha = () =>
 
 export const apiGetLoginSecurity = () => get<LoginSecurity>('/login/security')
 
+/** 可选的「安全通知接收人」列表（都是真实主人） */
+export interface MasterUser {
+  userId: string
+  botId: string | null
+}
+
+export const apiGetMasterList = () => get<MasterUser[]>('/login/security/masters')
+
+/**
+ * 设置安全通知接收人：
+ * 冻结/重置通知、登录验证码、#锅巴解冻 / #锅巴重置密码 都只认他。
+ */
+export const apiSetSecurityMaster = (body: { currentPassword: string; userId: string }) =>
+  put<LoginSecurity>('/login/security/security-master', body, { showSuccess: true })
+
 export const apiSetLoginCredentials = (body: { username: string; password: string; currentPassword?: string }) =>
   put<LoginSecurity & { device?: DeviceCredential }>('/login/security/credentials', body, { showSuccess: true })
 

@@ -50,10 +50,17 @@ export class AccessGateController extends ApiController {
 
   async setPassword(req) {
     const { currentPassword, password } = req.body ?? {}
-    return Result.ok(
-      await this.accessGateService.setPassword(currentPassword, password),
-      '二级密码已保存',
-    )
+    try {
+      return Result.ok(
+        await this.accessGateService.setPassword(currentPassword, password, req),
+        '二级密码已保存',
+      )
+    } catch (error) {
+      if (error?.credentialsReset) {
+        return new Result(Constant.CREDENTIALS_RESET_CODE, { frozen: false, credentialsReset: true }, error.message)
+      }
+      throw error
+    }
   }
 
   /** 忘记二级密码：用登录密码直接重置 */
@@ -73,9 +80,16 @@ export class AccessGateController extends ApiController {
   }
 
   async clearPassword(req) {
-    return Result.ok(
-      await this.accessGateService.clearPassword(req.body?.currentPassword),
-      '二级密码已关闭',
-    )
+    try {
+      return Result.ok(
+        await this.accessGateService.clearPassword(req.body?.currentPassword, req),
+        '二级密码已关闭',
+      )
+    } catch (error) {
+      if (error?.credentialsReset) {
+        return new Result(Constant.CREDENTIALS_RESET_CODE, { frozen: false, credentialsReset: true }, error.message)
+      }
+      throw error
+    }
   }
 }
