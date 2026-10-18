@@ -1,15 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Table, Tag, Tooltip, message } from 'ant-design-vue'
+import { useRouter } from 'vue-router'
+import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Select, Table, Tag, Tooltip, message } from 'ant-design-vue'
 import {
+  apiClearGatePassword,
   apiClearTrustedDevices,
   apiClearTrustedIps,
+  apiGetGateStatus,
   apiGetLoginSecurity,
+  apiGetMasterList,
   apiRevokeTrustedDevice,
   apiRevokeTrustedIp,
+  apiSetGatePassword,
   apiSetLoginCredentials,
+  apiSetSecurityMaster,
+  type MasterUser,
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { useGateStore } from '@/stores/gate'
+import { CREDENTIALS_RESET_CODE } from '@/utils/env'
 import {
   clearDeviceSecret,
   getDeviceId,
@@ -20,6 +29,8 @@ import {
 import type { LoginSecurity, TrustedDevice } from '@/types'
 
 const auth = useAuthStore()
+const gate = useGateStore()
+const router = useRouter()
 
 const loading = ref(true)
 /** 是否已完成过至少一次加载；用于区分首屏与刷新，避免刷新时拆掉布局 */
@@ -27,6 +38,16 @@ const hydrated = ref(false)
 const saving = ref(false)
 const security = ref<LoginSecurity>({ configured: false, username: '', trustedIps: [], trustedDevices: [] })
 const form = reactive({ username: '', currentPassword: '', password: '', confirmPassword: '' })
+
+/** 二级密码：是否已开启，以及开启/修改表单 */
+const gateConfigured = ref(false)
+const gateSaving = ref(false)
+const gateForm = reactive({ currentPassword: '', password: '', confirmPassword: '' })
+
+/** 安全通知接收人：冻结/重置通知、验证码、解冻指令都只认他 */
+const masters = ref<MasterUser[]>([])
+const notifySaving = ref(false)
+const notifyForm = reactive({ userId: '', currentPassword: '' })
 
 const devices = computed<TrustedDevice[]>(() => security.value.trustedDevices ?? [])
 /** 本机的设备 id，用来在列表里标出「本机」 */
@@ -38,13 +59,28 @@ async function load() {
   if (loading.value && hydrated.value) return
   loading.value = true
   try {
-    const next = await apiGetLoginSecurity()
+    const [next, gateStatus, masterList] = await Promise.all([
+      apiGetLoginSecurity(),
+      apiGetGateStatus().catch(() => null),
+      apiGetMasterList().catch(() => []),
+    ])
     security.value = next
     form.username = next.username
+    if (gateStatus) gateConfigured.value = !!gateStatus.configured
+    masters.value = Array.isArray(masterList) ? masterList : []
+    notifyForm.userId = next.securityMaster ?? ''
   } finally {
     loading.value = false
     hydrated.value = true
   }
+}
+
+/** 登录密码连错到阈值时后端会重置凭证，这里统一回登录页 */
+function handleCredentialsReset(error: any): boolean {
+  if (error?.code !== CREDENTIALS_RESET_CODE) return false
+  message.error(error?.message || '登录凭证已重置，请使用验证码重新登录')
+  router.replace('/login')
+  return true
 }
 
 async function save() {
@@ -87,9 +123,95 @@ async function save() {
     message.success('登录凭证已保存')
     await load()
   } catch (error: any) {
+    if (handleCredentialsReset(error)) return
     message.error(error?.message || '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+/** 开启或修改二级密码，需要当前登录密码 */
+async function saveGate() {
+  if (!gateForm.currentPassword) {
+    message.warning('请输入当前登录密码')
+    return
+  }
+  if (!gateForm.password) {
+    message.warning('请输入二级密码')
+    return
+  }
+  if (gateForm.password.length < 8 || gateForm.password.length > 128) {
+    message.warning('二级密码须为8至128位')
+    return
+  }
+  if (gateForm.password !== gateForm.confirmPassword) {
+    message.warning('两次输入的二级密码不一致')
+    return
+  }
+  if (gateForm.password === gateForm.currentPassword) {
+    message.warning('二级密码不能与登录密码相同')
+    return
+  }
+  gateSaving.value = true
+  try {
+    await apiSetGatePassword({
+      currentPassword: gateForm.currentPassword,
+      password: gateForm.password,
+    })
+    gateConfigured.value = true
+    // 设置完立即锁上：进入敏感页面必须重新输入一次二级密码
+    gate.lockNow()
+    gateForm.password = ''
+    gateForm.confirmPassword = ''
+  } catch (error: any) {
+    if (handleCredentialsReset(error)) return
+    message.error(error?.message || '保存失败')
+  } finally {
+    gateSaving.value = false
+  }
+}
+
+/** 关闭二级密码，需要当前登录密码 */
+async function clearGate() {
+  if (!gateForm.currentPassword) {
+    message.warning('请输入当前登录密码')
+    return
+  }
+  gateSaving.value = true
+  try {
+    await apiClearGatePassword(gateForm.currentPassword)
+    gateConfigured.value = false
+    gate.reset()
+    gateForm.password = ''
+    gateForm.confirmPassword = ''
+  } catch (error: any) {
+    if (handleCredentialsReset(error)) return
+    message.error(error?.message || '关闭失败')
+  } finally {
+    gateSaving.value = false
+  }
+}
+
+/** 保存安全通知接收人，需要当前登录密码 */
+async function saveNotifyMaster() {
+  if (!notifyForm.currentPassword) {
+    message.warning('请输入当前登录密码')
+    return
+  }
+  notifySaving.value = true
+  try {
+    const next = await apiSetSecurityMaster({
+      currentPassword: notifyForm.currentPassword,
+      userId: notifyForm.userId ?? '',
+    })
+    security.value = { ...security.value, ...next }
+    notifyForm.userId = next.securityMaster ?? ''
+    notifyForm.currentPassword = ''
+  } catch (error: any) {
+    if (handleCredentialsReset(error)) return
+    message.error(error?.message || '保存失败')
+  } finally {
+    notifySaving.value = false
   }
 }
 
@@ -191,6 +313,69 @@ onMounted(load)
           </FormItem>
         </div>
         <Button type="primary" :loading="saving" @click="save">保存登录凭证</Button>
+      </Form>
+    </Card>
+
+    <Card :bordered="false" class="g-sec-gate">
+      <template #title>
+        二级密码
+        <Tag :color="gateConfigured ? 'green' : 'default'" class="g-sec-tag">
+          {{ gateConfigured ? '已开启' : '未开启' }}
+        </Tag>
+      </template>
+      <p class="g-sec-tip">
+        开启后，进入文件管理、数据浏览、终端、消息记录和账号管理需要再输入一次二级密码；
+        连续输错 3 次会冻结整个面板，私聊机器人发送 #锅巴解冻 恢复；忘记密码可在锁屏页用登录密码重置。
+      </p>
+      <Form layout="vertical" class="g-sec-form">
+        <div class="g-sec-grid is-configured">
+          <FormItem label="当前登录密码" required>
+            <Input.Password v-model:value="gateForm.currentPassword" autocomplete="current-password" />
+          </FormItem>
+          <FormItem :label="gateConfigured ? '新二级密码' : '二级密码'" required>
+            <Input.Password
+              v-model:value="gateForm.password"
+              placeholder="8 位或以上"
+              autocomplete="new-password"
+            />
+          </FormItem>
+          <FormItem label="确认二级密码" required>
+            <Input.Password v-model:value="gateForm.confirmPassword" autocomplete="new-password" />
+          </FormItem>
+        </div>
+        <div class="g-sec-actions">
+          <Button type="primary" :loading="gateSaving" @click="saveGate">
+            {{ gateConfigured ? '保存二级密码' : '开启二级密码' }}
+          </Button>
+          <Popconfirm v-if="gateConfigured" title="确定关闭二级密码？" @confirm="clearGate">
+            <Button danger :disabled="gateSaving">关闭二级密码</Button>
+          </Popconfirm>
+        </div>
+      </Form>
+    </Card>
+
+    <Card :bordered="false" class="g-sec-notify">
+      <template #title>安全通知</template>
+      <p class="g-sec-tip">
+        冻结、登录失败重置、二级密码输错等通知只发给这个主人；登录验证码也只发给他；
+        #锅巴解冻 与 #锅巴重置密码 也只接受这个主人。留空则沿用默认（通知全部主人）。
+      </p>
+      <Form layout="vertical" class="g-sec-form">
+        <div class="g-sec-grid is-configured">
+          <FormItem label="通知接收人">
+            <Select
+              v-model:value="notifyForm.userId"
+              allow-clear
+              show-search
+              placeholder="留空 = 全部主人"
+              :options="masters.map(m => ({ value: m.userId, label: m.userId }))"
+            />
+          </FormItem>
+          <FormItem label="当前登录密码" required>
+            <Input.Password v-model:value="notifyForm.currentPassword" autocomplete="current-password" />
+          </FormItem>
+        </div>
+        <Button type="primary" :loading="notifySaving" @click="saveNotifyMaster">保存安全通知设置</Button>
       </Form>
     </Card>
 
@@ -326,6 +511,20 @@ onMounted(load)
 
 .g-sec-cred {
   margin-bottom: 16px;
+}
+
+.g-sec-gate {
+  margin-bottom: 16px;
+}
+
+.g-sec-notify {
+  margin-bottom: 16px;
+}
+
+.g-sec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .g-sec-devs {

@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import {autowired, Result} from '#guoba.framework';
-import {ApiController} from '#guoba.platform'
+import {ApiController, Constant} from '#guoba.platform'
 
 export class LoginController extends ApiController {
 
@@ -20,7 +20,9 @@ export class LoginController extends ApiController {
     this.post('/login/code/request', this.codeLoginRequest)
     this.post('/login/code/check', this.codeLoginCheck)
     this.get('/login/security', this.security)
+    this.get('/login/security/masters', this.masters)
     this.put('/login/security/credentials', this.setCredentials)
+    this.put('/login/security/security-master', this.setSecurityMaster)
     this.delete('/login/security/trusted-ips/:ip', this.revokeIp)
     this.delete('/login/security/trusted-ips', this.clearIps)
     this.delete('/login/security/trusted-devices/:id', this.revokeDevice)
@@ -32,11 +34,23 @@ export class LoginController extends ApiController {
   }
 
   async login(req) {
-    const result = await this.loginSecurityService.login(req, req.body, this.loginService)
-    if (result?.captchaRequired) {
-      return Result.error(428, result, result.error, 428)
+    try {
+      const result = await this.loginSecurityService.login(req, req.body, this.loginService)
+      if (result?.captchaRequired) {
+        return Result.error(428, result, result.error, 428)
+      }
+      return Result.ok(result)
+    } catch (error) {
+      // 登录密码连错 3 次：凭证已被重置，回专用业务码让前端切到验证码登录
+      if (error?.credentialsReset) {
+        return new Result(Constant.CREDENTIALS_RESET_CODE, {credentialsReset: true}, error.message)
+      }
+      // 二级密码错误导致的面板冻结
+      if (error?.frozen) {
+        return new Result(Constant.FROZEN_CODE, {frozen: true}, error.message, 423)
+      }
+      throw error
     }
-    return Result.ok(result)
   }
 
   async captchaRequest(req) {
@@ -48,9 +62,40 @@ export class LoginController extends ApiController {
     return Result.ok(this.loginSecurityService.getSecurity())
   }
 
+  /** 可选的安全通知接收人列表（都是真实主人） */
+  async masters() {
+    return Result.ok(await this.loginSecurityService.listMasters())
+  }
+
+  /** 设置安全通知接收人（冻结 / 重置通知、验证码、解冻指令都只认他） */
+  async setSecurityMaster(req) {
+    const {currentPassword, userId} = req.body ?? {}
+    try {
+      return Result.ok(
+        await this.loginSecurityService.setSecurityMaster(currentPassword, userId, req),
+        '安全通知接收人已保存',
+      )
+    } catch (error) {
+      if (error?.credentialsReset) {
+        return new Result(Constant.CREDENTIALS_RESET_CODE, {credentialsReset: true}, error.message)
+      }
+      throw error
+    }
+  }
+
   async setCredentials(req) {
     const {username, password, currentPassword} = req.body ?? {}
-    return Result.ok(this.loginSecurityService.setCredentials(username, password, currentPassword, req), '登录凭证已保存')
+    try {
+      return Result.ok(
+        await this.loginSecurityService.setCredentials(username, password, currentPassword, req),
+        '登录凭证已保存',
+      )
+    } catch (error) {
+      if (error?.credentialsReset) {
+        return new Result(Constant.CREDENTIALS_RESET_CODE, {credentialsReset: true}, error.message)
+      }
+      throw error
+    }
   }
 
   async revokeIp(req) {

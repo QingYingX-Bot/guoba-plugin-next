@@ -10,7 +10,6 @@ import {
   Skeleton,
   Space,
   Tag,
-  message,
 } from 'ant-design-vue'
 import SchemaForm from '@/components/schema-form/SchemaForm.vue'
 import { PLUGIN_NAME_KEY } from '@/components/schema-form/context'
@@ -73,11 +72,13 @@ async function load() {
 async function save() {
   const form = formRef.value
   if (!form) return
+  // 插件自己写的 guoba.support.js 常把实际留空也能用的项标成必填，
+  // 甚至把当前配置里没有的字段设成 required。校验只负责在字段下方标红，
+  // 不再拦住保存 —— 老版本锅巴里这些表单本来就能存。
   try {
     await form.validate()
   } catch {
-    message.warning('请先修正表单中的错误')
-    return
+    // 有项目没通过校验：保留红色提示，照常保存
   }
   saving.value = true
   try {

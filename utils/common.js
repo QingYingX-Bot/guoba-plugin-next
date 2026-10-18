@@ -155,6 +155,37 @@ export async function sendToOneMaster(messages, target = null) {
 }
 
 /**
+ * 只发给指定的一个主人。
+ *
+ * 安全通知 / 登录验证码这类消息不能回退给其他主人（多主人环境里可能有内鬼），
+ * 发送失败只记日志，绝不改发别人。
+ *
+ * @param messages 消息内容（字符串或数组）
+ * @param userId 目标主人的账号标识（与 cfg.master / masterQQ 里的一致）
+ * @return {Promise<number>} 成功发送的消息条数
+ */
+export async function sendToMasterUser(messages, userId) {
+  const list = Array.isArray(messages) ? messages : [messages]
+  const target = String(userId ?? '').trim()
+  if (!target) return 0
+  const candidates = (await getRealMasterList()).filter(i => String(i.userId) === target)
+  if (candidates.length === 0) {
+    logger.warn(`[Guoba] 指定主人(${target})不在主人列表中，跳过发送`)
+    return 0
+  }
+  for (const receiver of candidates) {
+    let sent = 0
+    for (const msg of list) {
+      if (!await replyPrivate(receiver, msg)) break
+      sent++
+    }
+    if (sent === list.length) return sent
+  }
+  logger.warn(`[Guoba] 给指定主人(${target})发送失败，未改发其他主人`)
+  return 0
+}
+
+/**
  * 给指定 Bot 账号的主人发送消息
  *
  * 与 sendToMaster 的区别：只发给这个账号名下的主人，不会顺带发给 stdin

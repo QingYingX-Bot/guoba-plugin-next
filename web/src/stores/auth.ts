@@ -12,6 +12,7 @@ import {
 import { setTokenGetter, setUnauthorizedHandler } from '@/api/request'
 import { TOKEN_STORAGE_KEY } from '@/utils/env'
 import { saveDeviceCredential } from '@/utils/device'
+import { useGateStore } from './gate'
 import type { LoginUser, MenuItem } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -48,6 +49,8 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     menus.value = []
     menuLoaded.value = false
+    // 二级密码的解锁凭证属于这次登录，一起清掉
+    useGateStore().reset()
   }
 
   async function loginByPassword(username: string, password: string, captcha?: string) {

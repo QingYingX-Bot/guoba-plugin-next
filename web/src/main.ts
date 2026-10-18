@@ -4,6 +4,8 @@ import Antd from 'ant-design-vue'
 import App from './App.vue'
 import router from './router'
 import { bindAuthToRequest } from './stores/auth'
+import { useGateStore } from './stores/gate'
+import { setGateBlockedHandler, setGateTokenGetter, setFrozenHandler } from './api/request'
 import { setupOfflineIcons } from './components/icons'
 import './styles/index.css'
 
@@ -18,6 +20,23 @@ bindAuthToRequest(() => {
   const current = router.currentRoute.value
   if (current.meta?.public) return
   router.replace({ path: '/login', query: { redirect: current.fullPath } })
+})
+
+// 二级密码：请求头带上解锁凭证；被拦时把状态同步到 store 并切到锁屏页
+setGateTokenGetter(() => useGateStore().gateToken || undefined)
+setGateBlockedHandler((code, data) => {
+  const gate = useGateStore()
+  gate.applyBlocked(code, data)
+  const current = router.currentRoute.value
+  if (current.path === '/gate' || current.meta?.public || !current.path) return
+  router.replace({ path: '/gate', query: { redirect: current.fullPath } })
+})
+
+// 面板冻结：直接切到冻结页
+setFrozenHandler(() => {
+  const current = router.currentRoute.value
+  if (current.path === '/frozen') return
+  router.replace('/frozen')
 })
 
 app.use(router)

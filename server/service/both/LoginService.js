@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken'
 import {GuobaError, Service} from '#guoba.framework';
 import {cfg, Constant} from "#guoba.platform";
-import {getAllWebAddress, randomString, sendToOneMaster} from '#guoba.utils'
+import {getAllWebAddress, randomString, sendToMasterUser, sendToOneMaster} from '#guoba.utils'
 
 export class LoginService extends Service {
   constructor(app) {
@@ -84,12 +84,16 @@ export class LoginService extends Service {
    */
   async sendCodeToMaster(code) {
     try {
-      const target = await this.getLoginRequester()
-      const count = await sendToOneMaster([
+      const messages = [
         '[锅巴面板] 您正在请求验证码登录，验证码五分钟内有效：',
         code,
         '若非本人操作请忽略，并检查登录地址是否泄露。',
-      ], target)
+      ]
+      // 指定了安全通知接收人时，验证码只发给他，避免其他主人拿到
+      const securityMaster = cfg.get('auth.securityMaster')
+      const count = securityMaster
+        ? await sendToMasterUser(messages, securityMaster)
+        : await sendToOneMaster(messages, await this.getLoginRequester())
       return count > 0 ? 1 : 0
     } catch (err) {
       logger.error('[Guoba] 验证码私发主人失败')

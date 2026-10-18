@@ -22,9 +22,12 @@ const exclude = [
   new RegExp('^/api/login/status$'),
   new RegExp('^/api/login/captcha/request$'),
   new RegExp('^/api/login/code/(request|check)$'),
-  new RegExp('^/api/helper/transit'),
-  new RegExp('^/api/helper/release_port'),
-  new RegExp('^/api/plugin/s/.+/icon'),
+  // 冻结状态查询：面板冻结时前端要靠它显示冻结页（AccessFreezeInterceptor 会放行）
+  new RegExp('^/api/frozen/status$'),
+  // 只认本机回环调用（HelperService 有 isLoopbackAddress 兜底）
+  new RegExp('^/api/helper/release_port$'),
+  // 插件图标是图片，前端 <img> 带不上请求头，放行不影响鉴权面
+  new RegExp('^/api/plugin/s/.+/icon$'),
 ]
 
 /**

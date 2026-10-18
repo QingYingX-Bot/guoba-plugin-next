@@ -5,6 +5,7 @@ import { cfg, Constant } from '#guoba.platform'
 export class GuobaLogin extends plugin {
   loginService = autowired('loginService')
   loginSecurityService = autowired('loginSecurityService')
+  freezeService = autowired('accessFreezeService')
 
   constructor (e) {
     super({
@@ -21,6 +22,11 @@ export class GuobaLogin extends plugin {
           // 忘记密码时由主人重置：清空账号密码和可信IP，回到初始化登录流程
           reg: '^#?锅巴重置(登录|登陆|密码)$',
           fnc: 'resetLogin'
+        },
+        {
+          // 登录密码或二级密码连错 3 次会冻结整个面板，只有主人能解
+          reg: '^#?锅巴解冻$',
+          fnc: 'unfreeze'
         }
       ]
     }, e)
@@ -52,8 +58,16 @@ export class GuobaLogin extends plugin {
     }
   }
 
+  /** 配置了安全通知接收人时，解冻 / 重置只接受这个人 */
+  isSecurityMaster () {
+    const target = cfg.get('auth.securityMaster')
+    if (!target) return true
+    return String(this.e.user_id) === String(target)
+  }
+
   async resetLogin () {
-    if (!this.e.isMaster) return false
+    // 只认私聊 + 配置的安全通知接收人，避免别的主人清空面板凭证
+    if (!this.e.isMaster || !this.e.isPrivate || !this.isSecurityMaster()) return false
     let configured
     try {
       configured = this.loginSecurityService.configured
@@ -65,15 +79,29 @@ export class GuobaLogin extends plugin {
     }
     this.loginSecurityService.resetCredentials()
     return this.reply(
-      '登录凭证已重置，账号密码、可信IP和可信设备已清空。\n'
+      '登录凭证已重置，账号密码、二级密码、可信IP和可信设备已清空。\n'
       + '发送“#锅巴登录”获取登录地址，在登录页点“获取登录令牌”，'
-      + '登录后在“账号管理 - 登录安全”里重新设置账号密码。'
+      + '登录后重新设置账号密码和二级密码。'
     )
+  }
+
+  /** 解除面板冻结（二级密码连错 3 次引起） */
+  async unfreeze () {
+    // 只认私聊 + 配置的安全通知接收人，避免别的主人解冻
+    if (!this.e.isMaster || !this.e.isPrivate || !this.isSecurityMaster()) return false
+    let existed
+    try {
+      existed = await this.freezeService.unfreeze()
+    } catch (err) {
+      return this.replyServerFailed(err)
+    }
+    return this.reply(existed
+      ? '锅巴已解冻，可以重新打开面板登录了。'
+      : '锅巴当前没有被冻结。')
   }
 
   async login () {
     if (!this.e.isMaster) return false
-
     // 记下是谁请求的登录：网页点“获取登录令牌”时，验证码只私聊发给他本人
     await this.rememberRequester()
 

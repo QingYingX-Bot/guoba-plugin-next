@@ -5,6 +5,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import GIcon from '@/components/GIcon.vue'
 import { apiGetPluginReadme } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import { withMountPrefix } from '@/utils/env'
 
 /**
@@ -29,8 +30,9 @@ const html = computed(() => {
   })
 })
 
-/** 中转图片，绕过防盗链 */
+/** 中转图片，绕过防盗链。接口已收进鉴权，<img> 带不了请求头，令牌走 query */
 const transitBase = withMountPrefix('/api/helper/transit')
+const auth = useAuthStore()
 
 async function load(force = false) {
   loading.value = true
@@ -67,7 +69,8 @@ function fixImages(el: HTMLElement | null) {
   el.querySelectorAll('img').forEach((img) => {
     const src = img.getAttribute('src')
     if (src && /^https?:\/\//.test(src) && !src.startsWith(transitBase)) {
-      img.setAttribute('src', `${transitBase}?url=${encodeURIComponent(src)}`)
+      const token = encodeURIComponent(auth.token ?? '')
+      img.setAttribute('src', `${transitBase}?url=${encodeURIComponent(src)}&token=${token}`)
     }
   })
 }

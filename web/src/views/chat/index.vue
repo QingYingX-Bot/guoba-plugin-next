@@ -42,6 +42,7 @@ import {
 import { writeText } from '@/utils/clipboard'
 import { scrollPageToBottom } from '@/utils/scroll'
 import { useAuthStore } from '@/stores/auth'
+import { useGateStore } from '@/stores/gate'
 
 /** 轮询间隔。消息没有日志那么密，2 秒的延迟看着还算即时 */
 const INTERVAL = 2000
@@ -101,6 +102,7 @@ const RAW_TABS: Array<{ key: RawKey; title: string; hint: string; miss: string }
 ]
 
 const auth = useAuthStore()
+const gate = useGateStore()
 
 const status = ref<ChatStatus | null>(null)
 const bots = computed(() => status.value?.bots ?? [])
@@ -213,9 +215,9 @@ function markdownOf(segments: MsgSeg[]) {
 
 /* ---------------- 段渲染要用的注入 ---------------- */
 
-provide('msgAssetUrl', (assetId: string) => chatAssetUrl(assetId, auth.token))
+provide('msgAssetUrl', (assetId: string) => chatAssetUrl(assetId, auth.token, gate.gateToken))
 // QQ 直链的 rkey 会过期，加载失败时由服务端代拉一次
-provide('msgProxyUrl', (url: string) => chatProxyUrl(url, auth.token))
+provide('msgProxyUrl', (url: string) => chatProxyUrl(url, auth.token, gate.gateToken))
 
 /**
  * reply 段显示「昵称：摘要」—— 被引用的那条得在页面上还留着才查得到，
