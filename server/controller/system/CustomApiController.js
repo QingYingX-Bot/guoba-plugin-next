@@ -55,6 +55,9 @@ export class CustomApiController extends ApiController {
         this.mounted.add(key)
       }
     }
+    const paths = service.apis.map(a => `${a.method.toUpperCase()} /${a.owner}${a.route}`)
+    logger.mark(`[Guoba] 自定义接口挂载完成：登记 ${service.apis.length} 个，本次挂载 ${this.mounted.size} 个`)
+    logger.mark(`[Guoba] 接口路径：${paths.join(" | ")}`)
   }
 
   /**

@@ -1,4 +1,6 @@
 import {autowired} from '#guoba.framework'
+import {GuobaSupportMap} from '#guoba.platform'
+import {getPluginIconPath} from '../../../../../utils/pluginUtils.js'
 
 /**
  * 自定义页面的菜单。
@@ -44,14 +46,24 @@ export async function useCustomPagesMenu() {
     }
   }
   for (const [pluginName, items] of groups) {
+    const info = GuobaSupportMap.get(pluginName)?.pluginInfo
     children.push({
       path: `/custom/plugin/${pluginName}`,
-      name: 'CustomPlugin_' + pluginName,
+      name: `CustomPlugin_${pluginName}`,
       component: '/guoba/custom/manage',
       meta: {
         title: pluginName,
-        icon: 'ant-design:appstore-outlined',
+        icon: info?.icon ?? 'ant-design:appstore-outlined',
         ignoreRoute: true,
+      },
+      // 与「插件配置」菜单一致：前端按 guobaMeta.plugin 渲染插件自己的图标
+      guobaMeta: {
+        plugin: {
+          name: pluginName,
+          icon: info?.icon,
+          iconColor: info?.iconColor,
+          iconPath: getPluginIconPath(info),
+        },
       },
       redirect: items[0]?.path,
       children: items,
