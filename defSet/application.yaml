@@ -37,6 +37,9 @@ server:
   helloTRSS: true
   # 可信反向代理地址或CIDR。未配置时忽略 X-Forwarded-For，防止伪造来源IP
   trustedProxyCidrs: []
+  # 只允许局域网访问面板（共享端口模式下锅巴挂在宿主端口上，这一项仍然生效）
+  # 需要从外网访问时，在聊天里发「#开启锅巴外网」，用完发「#关闭锅巴外网」
+  lanOnly: true
 
 # 登录安全配置
 # passwordHash 由锅巴安全设置生成，禁止手动填写明文密码

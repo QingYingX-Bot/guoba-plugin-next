@@ -5,6 +5,7 @@ import {hostName, isTRSS, isV3, isV4} from '#guoba.adapter'
 import {getWebAddress} from '#guoba.utils'
 import {listen} from './helper/listen.js'
 import chalk from 'chalk'
+import {installLanGuard} from './utils/lanGuard.js'
 
 const {mountRoot, mountRootWithSlash} = cfg.serverMountPath
 const realRoot = _paths.server.realMountPrefix + '/'
@@ -121,6 +122,8 @@ export async function createServer({isInit}) {
 
 function appCreated(guobaApp) {
   const {app} = guobaApp
+  // 外网闸门：默认只让局域网打开面板，必须排在所有锅巴路由之前
+  installLanGuard(app, [mountRootWithSlash, realRoot, mountRoot])
   // 重定向根路径，用于自定义挂载路径路径
   app.use((req, res, next) => {
 

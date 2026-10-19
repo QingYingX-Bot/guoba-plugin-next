@@ -27,6 +27,11 @@ export class GuobaLogin extends plugin {
           // 登录密码或二级密码连错 3 次会冻结整个面板，只有主人能解
           reg: '^#?锅巴解冻$',
           fnc: 'unfreeze'
+        },
+        {
+          // 面板默认只让局域网访问，要从外网打开得由主人临时开
+          reg: '^#?(开启|关闭)锅巴外网$',
+          fnc: 'toggleWan'
         }
       ]
     }, e)
@@ -98,6 +103,35 @@ export class GuobaLogin extends plugin {
     return this.reply(existed
       ? '锅巴已解冻，可以重新打开面板登录了。'
       : '锅巴当前没有被冻结。')
+  }
+
+  /**
+   * 开关外网访问。
+   *
+   * 默认关着：面板只认局域网（同网段）来的请求。开的时候是把配置里的 lanOnly 关掉，
+   * 立刻生效，不用重启。
+   */
+  async toggleWan () {
+    if (!this.e.isMaster) return false
+    const open = /开启/.test(this.e.msg)
+    try {
+      cfg.set('server.lanOnly', !open)
+    } catch (err) {
+      return this.replyServerFailed(err)
+    }
+    if (!open) {
+      return this.reply('已关闭外网访问，现在只有局域网能打开面板。')
+    }
+    let address = ''
+    try {
+      address = await this.loginService.getWebAddress()
+    } catch {
+      // 拿不到地址不影响开关本身
+    }
+    return this.reply(address
+      ? `已开启外网访问：${address}
+用完发「#关闭锅巴外网」关掉。`
+      : '已开启外网访问。用完发「#关闭锅巴外网」关掉。')
   }
 
   async login () {
