@@ -413,9 +413,11 @@ export class LoginSecurityService extends Service {
   }
 
   /**
-   * 登录密码连续输错 3 次：冻结整个面板，只有主人能在聊天里解冻。
+   * 登录密码连续输错 3 次：永久冻结整个面板，只有主人能在聊天里解冻。
    *
-   * 不再重置凭证 —— 重置会把面板打回「未初始化」，等于给陌生人一个接管入口。
+   * 不设过期时间：带 TTL 的冻结只是把攻击节奏从「每秒一次」改成「每 15 分钟三次」，
+   * 挡住的是手速，挡不住耐心。
+   * 也不重置凭证 —— 重置会把面板打回「未初始化」，等于给陌生人一个接管入口。
    */
   async handleTooManyPasswordFailures(req) {
     const ip = getClientIp(req)
@@ -424,8 +426,10 @@ export class LoginSecurityService extends Service {
     // 直接冻结整个面板（含登录入口和端口闸门），只有主人能在聊天里解冻。
     this.#audit('login-frozen', { ip: ip || '', ua: ua.slice(0, 200) })
     try {
-      await this.accessFreezeService.freeze(
-        '登录密码连续输错 3 次', { ip, ua }, Constant.LOGIN_FREEZE_SECONDS)
+      // 不传有效期 = 永久冻结。给冻结加 TTL 等于告诉攻击者「等 15 分钟再来」，
+      // 每过一轮又能试 3 次，冻了跟没冻一样。机器人下线也能再上线，
+      // 解冻指令永远有到达的那天，所以这里就该一直锁着。
+      await this.accessFreezeService.freeze('登录密码连续输错 3 次', { ip, ua })
     } catch (error) {
       logger.error('[Guoba] 冻结面板失败')
       logger.error(error)

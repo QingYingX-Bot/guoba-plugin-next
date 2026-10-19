@@ -73,8 +73,9 @@ npm install express multer jsonwebtoken
 
 **③ 启动** —— 重启云崽，控制台会打印面板地址。
 
-默认端口 `50831`（在 `config/application.yaml` 改）。TRSS 系宿主会自动共享宿主的 HTTP 端口，
-挂在 `/guoba` 路径下。
+端口在**首次启动时随机生成**（20000–59999），写进 `config/application.yaml`，之后不会再变，
+想改就在那份配置里改。不给所有人一个固定默认端口，是因为固定端口扫一遍网段就能找到所有面板。
+TRSS 系宿主会自动共享宿主的 HTTP 端口，挂在 `/guoba` 路径下。
 
 ## 更新
 
@@ -93,7 +94,8 @@ npm install express multer jsonwebtoken
   `security.fileWriteScopes`（加了 `plugins` 就等于把提权通道重新打开）。
 - **网页终端默认关闭**（`security.enableTerminal: false`），它等同服务器 shell。
 - 装插件、改插件配置、备份还原、改面板配置都要先过二级密码。
-- 登录密码连错 3 次直接冻结面板并断开对外端口，只有主人能在聊天里解冻。
+- 登录密码连错 3 次直接冻结面板并断开对外端口，只有主人能在聊天里发「#锅巴解冻」解除；
+  冻结**不会自动过期**，等多久都还是冻着。
 - 修改 / 重置账号密码、面板冻结都会私聊通知主人，并写入 `data/guoba/security-audit.log`。
 
 # 免责声明

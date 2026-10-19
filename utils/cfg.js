@@ -6,6 +6,19 @@ import {_paths} from '#guoba.platform'
 import {isTRSS} from '#guoba.adapter'
 import {randomString} from '#guoba.utils'
 
+/**
+ * 首次安装时随机挑一个面板端口。
+ * 避开宿主自己占用的端口（共享端口模式下这个值不生效，但换了模式就会生效）。
+ */
+function pickRandomPort(trssCfg) {
+  const hostPort = Number(trssCfg?.server?.port ?? trssCfg?.bot?.port ?? 0)
+  for (let i = 0; i < 20; i++) {
+    const port = lodash.random(20000, 59999)
+    if (port !== hostPort) return port
+  }
+  return lodash.random(20000, 59999)
+}
+
 /** 配置文件 */
 class GuobaConfig {
   constructor(options) {
@@ -44,6 +57,10 @@ class GuobaConfig {
     if (isInit) {
       // 随机生成32位 secret
       this.set('jwt.secret', randomString(32))
+      // 端口也随机。写死一个默认端口，等于告诉整个网段「这个端口上就是锅巴」，
+      // 别人扫一遍端口段就能把装了这插件的面板全找出来，逐个试密码。
+      // 只在首次生成配置时挑一次，之后主人自己改的值不会被覆盖。
+      this.set('server.port', pickRandomPort(this.trssCfg))
     }
     // 旧版本配置没有 auth 节点时，仅补齐结构，不覆盖用户已有配置。
     if (!this.config.reader.jsonData.auth || typeof this.config.reader.jsonData.auth !== 'object') {

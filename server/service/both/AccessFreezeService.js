@@ -155,7 +155,7 @@ export class AccessFreezeService extends Service {
         `来源 IP：${info.ip || '未知'}`,
       ]
       if (info.ua) lines.push(`设备：${info.ua}`)
-      lines.push('解除：私聊机器人发送 #锅巴解冻')
+      lines.push('解除：私聊机器人发送 #锅巴解冻（不会自动解除）')
       const message = lines.join('\n')
       const target = cfg.get('auth.securityMaster')
       // 指定了安全通知接收人时只发给他，发送失败也不改发其他主人
