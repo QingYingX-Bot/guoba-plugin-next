@@ -1,0 +1,9 @@
+[
+  {
+    "id": "self-check",
+    "title": "能力自检",
+    "icon": "ant-design:bug-outlined",
+    "component": "pages/self-check.js",
+    "priority": 10
+  }
+]

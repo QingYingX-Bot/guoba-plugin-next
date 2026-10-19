@@ -42,6 +42,12 @@ setFrozenHandler(() => {
 app.use(router)
 app.use(Antd)
 
+// 暴露组件库给插件页面：插件页面是运行时动态加载的 ESM，不能 import 裸模块，
+// 只能从这里拿 Vue / antd 实例（同一实例，主题与锅巴完全一致）。
+import * as VueLib from 'vue'
+import * as AntdLib from 'ant-design-vue'
+;(window as any).__GUOBA_LIB__ = { Vue: VueLib, antd: AntdLib, router }
+
 app.mount('#app')
 
 // 移除首屏 loading

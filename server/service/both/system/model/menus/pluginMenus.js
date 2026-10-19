@@ -1,4 +1,5 @@
 import {GuobaSupportMap, PluginsMap} from '#guoba.platform'
+import {autowired} from '#guoba.framework'
 import {getPluginIconPath, parseShowInMenu} from '../../../../../utils/pluginUtils.js'
 
 const pluginsStoreMenu = {
@@ -34,7 +35,9 @@ export async function usePluginsMenu() {
       return
     }
 
-    pluginMenus.push({
+    // 有 web/pages.json 的插件：二级只做展开，三级 = 插件配置 + 插件页面
+    const webPages = autowired('pluginWebService')?.getPages(name) || []
+    const node = {
       path: `/plugin/@/${name}`,
       name: 'PluginDetail_' + name,
       component: `/guoba/plugins/plugin-detail/index`,
@@ -50,8 +53,27 @@ export async function usePluginsMenu() {
           iconColor: value.pluginInfo?.iconColor,
           iconPath: getPluginIconPath(value.pluginInfo),
         },
-      }
-    })
+      },
+    }
+    if (webPages.length) {
+      node.redirect = `/plugin/@/${name}/config`
+      node.children = [
+        {
+          path: `/plugin/@/${name}/config`,
+          name: `PluginConfig_${name}`,
+          component: '/guoba/plugins/plugin-detail/index',
+          meta: { title: '插件配置', icon: 'ant-design:setting-outlined' },
+        },
+        ...webPages.map((page) => ({
+          path: `/plugin/@/${name}/page/${page.id}`,
+          name: `PluginPage_${name}_${page.id}`,
+          component: '/guoba/plugin-page/index',
+          meta: { title: page.title, icon: page.icon || 'ant-design:file-outlined', ignoreRoute: true },
+          guobaMeta: { pluginPage: { plugin: name, id: page.id, component: page.entry } },
+        })),
+      ]
+    }
+    pluginMenus.push(node)
   })
   if (pluginMenus.length > 0) {
     pluginMenus.push({

@@ -122,6 +122,20 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '插件配置' },
       },
       {
+        // 插件配置（三级：插件页面改造后，配置页也降到三级）
+        path: 'plugin/@/:name/config',
+        name: 'PluginConfig',
+        component: () => import('@/views/plugins/PluginDetail.vue'),
+        meta: { title: '插件配置' },
+      },
+      {
+        // 插件自带页面（plugins/<插件>/web/pages.json），运行时动态加载
+        path: 'plugin/@/:name/page/:pageId',
+        name: 'PluginPage',
+        component: () => import('@/views/plugin/plugin-page/index.vue'),
+        meta: { title: '插件页面' },
+      },
+      {
         path: 'plugin/extra/miao-plugin',
         name: 'MiaoPlugin',
         component: () => import('@/views/miao/index.vue'),
