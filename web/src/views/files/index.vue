@@ -58,7 +58,10 @@ const renameName = ref('')
 
 /* 上传 */
 const uploadEl = ref<HTMLInputElement | null>(null)
+const uploadDirEl = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
+/* 上传文件夹时的进度文案，如 12/120；空串表示没在传 */
+const uploadHint = ref('')
 
 /** 已算出的文件夹占用，key 是相对路径；loading 表示正在算 */
 interface DirSize {
@@ -314,6 +317,59 @@ async function uploadFiles(files: File[]) {
   }
 }
 
+/* ---------------- 上传整个文件夹 ---------------- */
+
+function onDirChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (files.length) void uploadDirFiles(files)
+}
+
+/**
+ * 上传整个文件夹。
+ *
+ * 浏览器会给出每个文件的 `webkitRelativePath`（如 `我的夹/sub/a.txt`），
+ * 它按下标跟 files 一一对应，后端照这个相对路径建子目录。
+ * 一次几百个文件塞进一个请求容易超时，所以按 50 个一批发。
+ */
+async function uploadDirFiles(files: File[]) {
+  const BATCH = 50
+  const total = files.length
+  const tipKey = 'guoba-upload-dir'
+  let done = 0
+  let failed = ''
+  uploading.value = true
+  uploadHint.value = `0/${total}`
+  try {
+    for (let i = 0; i < total; i += BATCH) {
+      const batch = files.slice(i, i + BATCH)
+      const relPaths = batch.map((f) => {
+        const rel = (f as File & {webkitRelativePath?: string}).webkitRelativePath
+        return rel || f.name
+      })
+      const fd = new FormData()
+      fd.set('path', currentPath.value)
+      fd.set('relPaths', JSON.stringify(relPaths))
+      for (const f of batch) fd.append('files', f)
+      const data = await apiFileUpload(fd)
+      done += data.saved.length
+      uploadHint.value = `${done}/${total}`
+      message.loading({content: `正在上传文件夹 ${done}/${total}…`, key: tipKey, duration: 0})
+    }
+    message.success({content: `已上传 ${done} 个文件`, key: tipKey})
+    load()
+  } catch (e) {
+    failed = (e as Error)?.message ?? ''
+    // 中途失败时前面的批次已经落盘了，刷新让主人看到实际结果
+    message.error({content: failed ? `上传中断：${failed}` : '上传中断', key: tipKey})
+    load()
+  } finally {
+    uploading.value = false
+    uploadHint.value = ''
+  }
+}
+
 function downloadUrl(f: FsFile) {
   return f.isDir
     ? fileDownloadDirUrl(joinPath(f.name), auth.token, gate.gateToken)
@@ -436,6 +492,15 @@ onMounted(load)
           <GIcon icon="ant-design:upload-outlined" :size="13" />
           上传
         </a-button>
+        <a-button
+          size="small"
+          :loading="uploading"
+          title="选择整个文件夹上传，会按原来的目录结构放进当前目录"
+          @click="uploadDirEl?.click()"
+        >
+          <GIcon icon="ant-design:folder-open-outlined" :size="13" />
+          {{ uploadHint ? `上传文件夹 ${uploadHint}` : '上传文件夹' }}
+        </a-button>
         <a-button size="small" @click="openCreate('dir')">
           <GIcon icon="ant-design:folder-add-outlined" :size="13" />
           新建文件夹
@@ -445,6 +510,15 @@ onMounted(load)
           新建文件
         </a-button>
         <input ref="uploadEl" type="file" multiple hidden @change="onUploadChange" />
+        <input
+          ref="uploadDirEl"
+          type="file"
+          multiple
+          webkitdirectory
+          directory
+          hidden
+          @change="onDirChange"
+        />
       </div>
     </div>
 
