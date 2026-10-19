@@ -1,5 +1,6 @@
 import express from 'express'
 import multer from 'multer'
+import fs from 'node:fs'
 import {cfg, Constant} from '#guoba.platform'
 
 /**
@@ -28,6 +29,22 @@ export function useHelper(guobaApp) {
   // 2) 必须带着有效的面板令牌。鉴权在路由层才做，中间件不等鉴权就落盘的话，
   //    没有令牌的人也能反复上传把磁盘灌满。
   // 另外 limits 一定要给：单文件 500MB，最多 20 个文件。
+  /** 剩余磁盘空间（字节）；拿不到就返回 null，按「放行」处理，别把正常上传卡死 */
+  const freeDiskBytes = (dir) => {
+    try {
+      // statfsSync 是 Node 18.15+ 的同步接口，Linux / Windows 都有
+      const st = fs.statfsSync(dir)
+      const blockSize = Number(st.bsize ?? st.bsize ?? 0)
+      const freeBlocks = Number(st.bavail ?? st.bfree ?? 0)
+      if (!blockSize || !freeBlocks) return null
+      return blockSize * freeBlocks
+    } catch {
+      return null
+    }
+  }
+  /** 上传前至少留这么多空闲：低于它就拒绝，磁盘写满整个 Bot 会跟着崩 */
+  const MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+
   const upload = multer({
     dest: 'data/upload_tmp/',
     limits: {
@@ -76,6 +93,13 @@ export function useHelper(guobaApp) {
   app.post(/.*/, async (req, res, next) => {
     if (!isGuobaApi(req) || !(await hasAccessToken(req))) {
       next()
+      return
+    }
+    // 磁盘快满时直接拒绝：上传把根分区写满，redis 落盘、日志写入、插件读配置全都会失败，
+    // 表现就是整个 Bot 崩掉。这里按「剩余空间」兜底，而不是只靠单文件上限。
+    const free = freeDiskBytes('.')
+    if (free !== null && free < MIN_FREE_BYTES) {
+      res.status(507).json({ok: false, code: 507, message: '服务器磁盘空间不足，已拒绝上传', result: null})
       return
     }
     upload.any()(req, res, next)
