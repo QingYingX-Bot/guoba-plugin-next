@@ -54,6 +54,17 @@ auth:
   # 可信设备：浏览器里存一份长期凭证，换了IP也不用重新验证码
   trustedDevices: []
 
+# 安全加固
+security:
+  # 面板文件管理允许写入的目录（相对 Yunzai 根），其余目录只读。
+  # 往 plugins/ 写文件等于执行代码，所以默认不开放；确实要在面板里改代码再自己加。
+  fileWriteScopes:
+    - data
+    - logs
+    - temp
+  # 网页终端（等同服务器 shell），默认关闭，需要时改成 true
+  enableTerminal: false
+
 # jwt配置
 jwt:
   # JWT 秘钥（随机生成，非必要请勿修改！）

@@ -20,6 +20,16 @@ const PROTECTED = [
   /^\/api\/oicq(\/|$)/,
   // 登录安全：改登录密码、可信 IP / 设备都在这里
   /^\/api\/login\/security(\/|$)/,
+  // 装插件 / 改插件配置 / 插件动作 = 落地可执行代码
+  /^\/api\/plugin\/install$/,
+  /^\/api\/plugin\/uninstall$/,
+  /^\/api\/plugin\/update(\/|$)/,
+  /^\/api\/plugin\/do(\/|$)/,
+  /^\/api\/plugin\/s\/[^/]+\/config$/,
+  // 备份还原会覆盖代码和配置
+  /^\/api\/backup(\/|$)/,
+  // 配置写入能改主人、端口、密钥
+  /^\/api\/config(\/|$)/,
 ]
 
 export default class AccessGateInterceptor extends Interceptor {
