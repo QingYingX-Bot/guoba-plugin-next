@@ -37,6 +37,20 @@ function topLevelOf(key) {
  * SQLite 用 sequelize 走原始 SQL（Yunzai 自带该依赖，见 plugins/genshin/model/db/BaseModel.js），
  * 每次操作现连现关，避免长期占着文件句柄影响 Yunzai 自身的写入。
  */
+/** 面板里允许执行的 Redis 命令：只放数据读写与查看，任何能改配置 / 落盘 / 连外部的都不放 */
+const ALLOWED_REDIS_COMMANDS = [
+  'GET', 'MGET', 'STRLEN', 'EXISTS', 'TYPE', 'TTL', 'PTTL',
+  'SET', 'SETEX', 'PSETEX', 'SETNX', 'GETSET', 'INCR', 'DECR', 'INCRBY', 'DECRBY',
+  'APPEND', 'DEL', 'UNLINK', 'EXPIRE', 'PEXPIRE', 'PERSIST', 'RENAME',
+  'KEYS', 'SCAN', 'RANDOMKEY', 'DBSIZE', 'INFO',
+  'HGET', 'HMGET', 'HGETALL', 'HKEYS', 'HVALS', 'HLEN', 'HSET', 'HMSET', 'HDEL', 'HEXISTS',
+  'LLEN', 'LRANGE', 'LINDEX', 'LPUSH', 'RPUSH', 'LPOP', 'RPOP', 'LTRIM', 'LREM',
+  'SMEMBERS', 'SCARD', 'SISMEMBER', 'SADD', 'SREM',
+  'ZRANGE', 'ZREVRANGE', 'ZCARD', 'ZSCORE', 'ZADD', 'ZREM', 'ZRANK',
+  'PFADD', 'PFCOUNT',
+]
+
+
 export default class DataService extends Service {
 
   constructor(app) {
@@ -255,10 +269,10 @@ export default class DataService extends Service {
     if (parts.length === 0) throw new GuobaError('命令不能为空')
 
     const name = parts[0].toUpperCase()
-    // FLUSHALL / FLUSHDB 会清空整个 Bot 的数据，且面板上一次误点无法撤销
-    const denied = ['FLUSHALL', 'FLUSHDB', 'SHUTDOWN', 'DEBUG']
-    if (denied.includes(name)) {
-      throw new GuobaError(`${name} 风险过高，已禁用。确需执行请到服务器上手动操作`)
+    // 白名单，不用黑名单：黑名单永远漏。CONFIG SET dir + SAVE 能往任意路径写文件，
+    // MODULE LOAD 能加载 so，REPLICAOF 能把数据同步到外部，BLPOP / MONITOR 能把连接挂死。
+    if (!ALLOWED_REDIS_COMMANDS.includes(name)) {
+      throw new GuobaError(name + ' 不在面板允许的命令列表里。确需执行请到服务器上用 redis-cli')
     }
 
     const reply = await client.sendCommand(parts)
@@ -469,6 +483,18 @@ export default class DataService extends Service {
     if (!sql || !String(sql).trim()) throw new GuobaError('SQL 不能为空')
     const text = String(sql).trim()
     const isSelect = /^\s*(SELECT|PRAGMA|EXPLAIN|WITH)\b/i.test(text)
+    // 只读：面板的 SQL 框是给「看数据」用的。放开写就等于放开 ATTACH DATABASE，
+    // 能把库文件建到任意路径，也能把 Bot 的数据整表删掉。
+    if (!isSelect) {
+      throw new GuobaError('面板里只允许执行查询（SELECT / PRAGMA / EXPLAIN / WITH）')
+    }
+    if (/\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|ATTACH|DETACH|VACUUM|REINDEX)\b/i.test(text)) {
+      throw new GuobaError('检测到写操作，面板里只能查询')
+    }
+    if (text.replace(/;\s*$/, '').includes(';')) {
+      throw new GuobaError('一次只能执行一条语句')
+    }
+
 
     return this.#withDb(dbPath, async (sequelize) => {
       const started = Date.now()
