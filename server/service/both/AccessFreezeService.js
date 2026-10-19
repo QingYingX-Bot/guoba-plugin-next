@@ -71,7 +71,7 @@ export class AccessFreezeService extends Service {
    * @param reason 给主人看的原因，如「登录密码连续输错 3 次」
    * @param detail {ip, ua}
    */
-  async freeze(reason, detail = {}) {
+  async freeze(reason, detail = {}, ttlSeconds = 0) {
     const info = {
       reason,
       at: Date.now(),
@@ -84,7 +84,11 @@ export class AccessFreezeService extends Service {
     } catch {
       // 忽略，照常写入
     }
-    await redis.set(this.key, JSON.stringify(info))
+    if (ttlSeconds > 0) {
+      await redis.set(this.key, JSON.stringify(info), { EX: ttlSeconds })
+    } else {
+      await redis.set(this.key, JSON.stringify(info))
+    }
     // 端口闸门立即生效，并断开已经建立的 WS（机器人会自动从回环重连）
     setPortFrozen(true)
     closeExistingWebSockets()

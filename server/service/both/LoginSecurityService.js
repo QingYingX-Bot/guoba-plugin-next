@@ -424,7 +424,8 @@ export class LoginSecurityService extends Service {
     // 直接冻结整个面板（含登录入口和端口闸门），只有主人能在聊天里解冻。
     this.#audit('login-frozen', { ip: ip || '', ua: ua.slice(0, 200) })
     try {
-      await this.accessFreezeService.freeze('登录密码连续输错 3 次', { ip, ua })
+      await this.accessFreezeService.freeze(
+        '登录密码连续输错 3 次', { ip, ua }, Constant.LOGIN_FREEZE_SECONDS)
     } catch (error) {
       logger.error('[Guoba] 冻结面板失败')
       logger.error(error)

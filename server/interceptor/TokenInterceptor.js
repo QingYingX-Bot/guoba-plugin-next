@@ -16,6 +16,16 @@ const include = [
   ...liteInclude,
 ]
 
+// 允许把 token 放在 query 里的路径：只能写进 <a href> / <img src> / <script src> 的接口。
+// 其余接口一律走 header —— token 进了 URL 就会进日志、Referer、浏览器历史和截图。
+const queryTokenAllow = [
+  new RegExp('^/api/file/download$'),
+  new RegExp('^/api/file/download-dir$'),
+  new RegExp('^/api/custom-page/asset/[^/]+/[^/]+$'),
+  new RegExp('^/api/sandbox/asset/[^/]+$'),
+  new RegExp('^/api/helper/transit$'),
+]
+
 // 不需要拦截的路径
 const exclude = [
   // 仅放行登录所需的公开接口；/login/security 必须经过正式令牌校验。
@@ -50,10 +60,10 @@ export default class TokenInterceptor extends Interceptor {
     } else if (exclude.find(reg => this.check(reg, req))) {
       next()
     } else {
-      // 从query里获取token
-      let token = req.query?.token
-      if (!token) {
-        token = req.headers[Constant.TOKEN_KEY]
+      // 默认只认 header；只有下载类接口允许 token 走 query
+      let token = req.headers[Constant.TOKEN_KEY]
+      if (!token && queryTokenAllow.some(reg => this.check(reg, req))) {
+        token = req.query?.token
       }
       // iframe 里的 css/js 由浏览器按相对路径请求，带不上请求头，只能从Cookie里取。
       // 浏览器会自动携带Cookie，所以只在弱令牌路径上认它，不给其他接口留CSRF口子。
