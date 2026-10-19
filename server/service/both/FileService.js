@@ -1,7 +1,7 @@
 import path from 'node:path'
 import fs from 'node:fs'
 import {GuobaError, Service} from '#guoba.framework'
-import {_paths} from '#guoba.platform'
+import {_paths, cfg} from '#guoba.platform'
 import {dirStats, walkDir} from '../../utils/fsWalk.js'
 import {createZipStream} from '../../utils/zip.js'
 
@@ -60,6 +60,47 @@ export default class FileService extends Service {
     return [...parts, name].join('/')
   }
 
+  /** 面板允许写入的根内目录（可配置），默认只有 data / logs / temp */
+  #writeScopes() {
+    const configured = cfg.get('security.fileWriteScopes')
+    const list = Array.isArray(configured) ? configured : DEFAULT_WRITE_SCOPES
+    return list
+      .map(item => String(item ?? '').replace(/^[\/]+|[\/]+$/g, ''))
+      .filter(Boolean)
+  }
+
+  /** 已存在路径的真实位置必须仍在根内，防止符号链接把请求带到根外 */
+  #assertRealWithinRoot(abs) {
+    let probe = abs
+    while (!fs.existsSync(probe)) {
+      const parent = path.dirname(probe)
+      if (parent === probe) return
+      probe = parent
+    }
+    const realRoot = fs.realpathSync(this.root)
+    const real = fs.realpathSync(probe)
+    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+      throw new GuobaError('路径越界')
+    }
+  }
+
+  /**
+   * 写操作的双重校验：真实路径在根内 + 落在允许写入的目录里。
+   *
+   * 只靠「在 Yunzai 根内」挡不住提权：往 plugins/ 写一个 js 文件就等于执行代码。
+   * 所以写入默认只开放 data / logs / temp，其余目录一律只读。
+   */
+  #assertWritable(abs) {
+    this.#assertRealWithinRoot(abs)
+    const rel = path.relative(this.root, abs)
+    if (!rel) throw new GuobaError('不能直接修改根目录')
+    const top = rel.split(path.sep)[0]
+    const scopes = this.#writeScopes()
+    if (!scopes.includes(top)) {
+      throw new GuobaError(`为安全起见，面板只允许写入 ${scopes.join(' / ')} 目录`)
+    }
+  }
+
   /** 列目录：文件夹在前、按名称排，无权限的项跳过 */
   list(rel = '') {
     const dir = this.#resolve(rel)
@@ -103,6 +144,7 @@ export default class FileService extends Service {
   save(rel = '', content = '') {
     const abs = this.#resolve(rel)
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new GuobaError('文件不存在')
+    this.#assertWritable(abs)
     fs.writeFileSync(abs, String(content ?? ''), 'utf8')
     return {ok: true}
   }
@@ -111,6 +153,7 @@ export default class FileService extends Service {
   mkdir(rel = '') {
     const abs = this.#resolve(this.#sanitizeRel(rel))
     if (fs.existsSync(abs)) throw new GuobaError('目录已存在')
+    this.#assertWritable(abs)
     fs.mkdirSync(abs)
     return {ok: true}
   }
@@ -119,6 +162,7 @@ export default class FileService extends Service {
   create(rel = '', content = '') {
     const abs = this.#resolve(this.#sanitizeRel(rel))
     if (fs.existsSync(abs)) throw new GuobaError('文件已存在')
+    this.#assertWritable(abs)
     fs.writeFileSync(abs, String(content ?? ''), 'utf8')
     return {ok: true}
   }
@@ -131,6 +175,8 @@ export default class FileService extends Service {
     if (!fs.existsSync(abs)) throw new GuobaError('源不存在')
     const target = this.#resolve(path.posix.join(path.posix.dirname(rel), name))
     if (fs.existsSync(target)) throw new GuobaError('同名文件已存在')
+    this.#assertWritable(abs)
+    this.#assertWritable(target)
     fs.renameSync(abs, target)
     return {ok: true}
   }
@@ -139,6 +185,7 @@ export default class FileService extends Service {
   remove(rel = '') {
     const abs = this.#resolve(rel)
     if (!fs.existsSync(abs)) throw new GuobaError('不存在')
+    this.#assertWritable(abs)
     fs.rmSync(abs, {recursive: true, force: true})
     return {ok: true}
   }
@@ -150,6 +197,7 @@ export default class FileService extends Service {
   async upload(rel = '', files = []) {
     const dir = this.#resolve(rel)
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new GuobaError('目标目录不存在')
+    this.#assertWritable(dir)
     const list = Array.isArray(files) ? files : [files]
     if (!list.length) throw new GuobaError('没有收到文件')
     const saved = []
