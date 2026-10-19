@@ -87,6 +87,9 @@ export async function createServer({isInit}) {
     }
     logger.info('# ' + chalk.magenta('请妥善保管登陆地址，避免泄露！') + ' '.repeat(maxLength - 34) + ' #')
     logger.mark('#'.repeat(maxLength))
+    // 面板默认只开给局域网，第一次装的人不提示就会以为地址坏了
+    logger.info(chalk.yellow('[Guoba] 面板默认只允许局域网访问'))
+    logger.info(chalk.yellow('[Guoba] 需要从外网访问：聊天里发「#开启锅巴外网」，用完发「#关闭锅巴外网」'))
   }
   return {app, server}
 }

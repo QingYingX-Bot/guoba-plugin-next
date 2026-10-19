@@ -177,8 +177,9 @@ export class GuobaLogin extends plugin {
       if (local) {
         pushAddress('内网地址：', local)
       }
-      if (remote) {
+      if (remote && remote.length > 0) {
         pushAddress('外网地址：', remote)
+        message.push('外网地址默认不开放，要从外网访问请发「#开启锅巴外网」。')
       }
     }
 
@@ -189,6 +190,7 @@ export class GuobaLogin extends plugin {
         '还没设置账号密码。打开登录页点“获取登录令牌”（令牌私聊发给主人，五分钟内有效），\n'
         + '登录后在“账号管理 - 登录安全”里设置用户名和密码。'
       )
+      message.push('面板默认只允许局域网访问，需要从外网打开请发「#开启锅巴外网」。')
     }
 
     if (this.e?.platform) {
