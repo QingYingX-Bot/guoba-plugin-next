@@ -19,8 +19,8 @@ export class GuobaLogin extends plugin {
           fnc: 'login'
         },
         {
-          // 忘记密码时由主人重置：清空账号密码和可信IP，回到初始化登录流程
-          reg: '^#?锅巴重置(登录|登陆|密码)$',
+          // 忘记账号或密码时由主人重置：账号、密码、二级密码、可信设备和IP一起清空
+          reg: '^#?锅巴重置(登录|登陆|密码|账号)$',
           fnc: 'resetLogin'
         },
         {
@@ -79,7 +79,7 @@ export class GuobaLogin extends plugin {
     }
     this.loginSecurityService.resetCredentials()
     return this.reply(
-      '登录凭证已重置，账号密码、二级密码、可信IP和可信设备已清空。\n'
+      '账号已重置，账号密码、二级密码、可信IP和可信设备已清空。\n'
       + '发送“#锅巴登录”获取登录地址，在登录页点“获取登录令牌”，'
       + '登录后重新设置账号密码和二级密码。'
     )
@@ -149,7 +149,7 @@ export class GuobaLogin extends plugin {
     }
 
     if (configured) {
-      message.push('忘记密码可发送“#锅巴重置密码”。')
+      message.push('忘记账号或密码可发送“#锅巴重置账号”。')
     } else {
       message.push(
         '还没设置账号密码。打开登录页点“获取登录令牌”（令牌私聊发给主人，五分钟内有效），\n'

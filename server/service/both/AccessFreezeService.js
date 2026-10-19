@@ -14,8 +14,8 @@ import {
  * 所有接口（包括登录）都拒绝，只能由主人在聊天里发送「#锅巴解冻」恢复。
  * 冻结状态不设过期时间，交给主人手动解除。
  *
- * 登录密码连错 3 次不冻结面板，而是重置登录凭证、转验证码登录
- * （见 LoginSecurityService.handleTooManyPasswordFailures）。
+ * 登录密码连错 3 次同样冻结面板（见 LoginSecurityService.handleTooManyPasswordFailures），
+ * 不再重置凭证 —— 重置只会给陌生人一个「把面板打回未初始化」的按钮。
  *
  * 冻结同时会打开端口闸门（见 utils/freezePortGuard.js）：
  * 对外不再响应面板请求，只保留本机回环上的机器人协议端连接。

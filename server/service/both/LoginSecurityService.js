@@ -1,6 +1,8 @@
 import crypto from 'crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { autowired, Service, GuobaError } from '#guoba.framework'
-import { cfg, Constant } from '#guoba.platform'
+import { _paths, cfg, Constant } from '#guoba.platform'
 import { getRealMasterList, randomString, sendToMasterUser, sendToOneMaster } from '#guoba.utils'
 import { getClientIp, normalizeClientIp } from '../../utils/clientIp.js'
 import { hashPassword, validatePassword, validateUsername, verifyPassword } from '../../utils/passwordHash.js'
@@ -60,7 +62,8 @@ export class LoginSecurityService extends Service {
     if (!validateUsername(username)) throw new GuobaError('用户名长度必须为1至64位')
     if (!validatePassword(password)) throw new GuobaError('密码须为8至128位')
     // 已配置时改密码必须验证当前密码，失败同样计入连错次数
-    if (this.configured) {
+    const wasConfigured = this.configured
+    if (wasConfigured) {
       await this.verifyPasswordForSensitiveAction(req, currentPassword)
     }
     cfg.set('auth.username', username)
@@ -68,18 +71,84 @@ export class LoginSecurityService extends Service {
     if (!Array.isArray(cfg.get('auth.trustedIps'))) cfg.set('auth.trustedIps', [])
     if (!Array.isArray(cfg.get('auth.trustedDevices'))) cfg.set('auth.trustedDevices', [])
     // 设置凭证的人就是本人，直接信任当前IP和当前浏览器，退出后重新登录无需再走验证码
+    const ip = req ? getClientIp(req) : ''
+    const ua = typeof req?.headers?.['user-agent'] === 'string' ? req.headers['user-agent'] : ''
     let device
     if (req) {
-      const ip = getClientIp(req)
-      const ua = typeof req.headers?.['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
       this.addTrustedIp(ip, ua)
       device = this.issueDevice(req, this.verifyDevice(req, false))
     }
+    // 改面板密码是最敏感的操作之一，必须留痕并通知主人（以前这一步悄无声息）
+    const isFirst = !wasConfigured
+    this.#audit(isFirst ? 'credentials-init' : 'credentials-change', {
+      username, ip, ua: ua.slice(0, 200),
+    })
+    this.#notifyOwner([
+      `[锅巴面板] ${isFirst ? '面板已完成初始化配置' : '登录账号密码已被修改'}。`,
+      `时间：${this.#nowText()}`,
+      `用户名：${username}`,
+      `来源 IP：${ip || '未知'}`,
+      ...(ua ? [`设备：${ua.length > 160 ? ua.slice(0, 160) + '…' : ua}`] : []),
+      '若不是你本人操作，请立即在面板里重置密码，并检查可信设备与可信 IP。',
+    ])
     return {configured: true, username, device}
   }
 
-  /** 主人在聊天里发起的凭证重置：清空账号密码，回到初始化登录流程 */
+  /** 当前时间文本 */
+  #nowText() {
+    const now = new Date()
+    const pad = (v) => String(v).padStart(2, '0')
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
+      + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+  }
+
+  /**
+   * 安全事件审计。
+   *
+   * 先落盘：私聊通知会因 Bot 离线、非好友、超时而丢，但磁盘不会。
+   * 位置 data/guoba/security-audit.log，一行一个 JSON。
+   */
+  #audit(event, detail = {}) {
+    try {
+      const dir = path.join(_paths.data, 'guoba')
+      fs.mkdirSync(dir, { recursive: true })
+      const line = JSON.stringify({ time: this.#nowText(), event, ...detail })
+      fs.appendFileSync(path.join(dir, 'security-audit.log'), line + '\n')
+    } catch (error) {
+      logger.error('[Guoba] 安全审计日志写入失败')
+      logger.error(error)
+    }
+    logger.mark(`[Guoba][安全] ${event}`)
+  }
+
+  /** 把安全事件私聊给主人；没送达必须留下痕迹，而不是静默吞掉 */
+  #notifyOwner(lines) {
+    try {
+      const list = Array.isArray(lines) ? lines : [String(lines)]
+      const message = list.join('\n')
+      const target = cfg.get('auth.securityMaster')
+      const send = target ? sendToMasterUser(message, target) : sendToOneMaster(message)
+      Promise.resolve(send)
+        .then((count) => {
+          if (!count) {
+            logger.error(`[Guoba] 安全通知未能送达主人(${target || '默认'}），已写入审计日志`)
+            this.#audit('notify-failed', { target: target || '' })
+          }
+        })
+        .catch((error) => {
+          logger.error('[Guoba] 安全通知发送异常')
+          logger.error(error)
+          this.#audit('notify-error', { message: String(error?.message || error) })
+        })
+    } catch (error) {
+      logger.error('[Guoba] 安全通知发送失败')
+      logger.error(error)
+    }
+  }
+
+  /** 主人在聊天里发起的账号重置：账号、密码、二级密码一起清空，回到初始化登录流程 */
   resetCredentials() {
+    this.#audit('credentials-reset-by-owner', {})
     cfg.set('auth.username', '')
     cfg.set('auth.passwordHash', '')
     // 登录凭证都重置了，二级密码一起清掉；否则验证码登录后会被二级密码
@@ -324,7 +393,7 @@ export class LoginSecurityService extends Service {
 
   /**
    * 敏感操作（比如忘记二级密码时的重置）验证登录密码。
-   * 失败同样计入登录密码错误次数，连错 3 次会重置登录凭证并转验证码登录。
+   * 失败同样计入登录密码错误次数，连错 3 次会冻结整个面板。
    */
   async verifyPasswordForSensitiveAction(req, password) {
     const ip = getClientIp(req)
@@ -344,54 +413,26 @@ export class LoginSecurityService extends Service {
   }
 
   /**
-   * 登录密码连续输错 3 次：重置登录凭证，之后必须用验证码重新登录。
+   * 登录密码连续输错 3 次：冻结整个面板，只有主人能在聊天里解冻。
    *
-   * 不冻结面板：面板保持可用，但登录入口回到“未初始化”状态，
-   * 验证码只私聊发给主人，别人无法继续尝试。
+   * 不再重置凭证 —— 重置会把面板打回「未初始化」，等于给陌生人一个接管入口。
    */
   async handleTooManyPasswordFailures(req) {
     const ip = getClientIp(req)
-    this.resetCredentials()
+    const ua = typeof req?.headers?.['user-agent'] === 'string' ? req.headers['user-agent'] : ''
+    // 连错密码绝不重置凭证：重置等于给陌生人一个「把面板打回未初始化」的按钮。
+    // 直接冻结整个面板（含登录入口和端口闸门），只有主人能在聊天里解冻。
+    this.#audit('login-frozen', { ip: ip || '', ua: ua.slice(0, 200) })
+    try {
+      await this.accessFreezeService.freeze('登录密码连续输错 3 次', { ip, ua })
+    } catch (error) {
+      logger.error('[Guoba] 冻结面板失败')
+      logger.error(error)
+    }
     if (ip) await redis.del(this.passwordAttemptsKey(ip))
-    try {
-      await this.accessFreezeService.clearSessions()
-    } catch (error) {
-      logger.error('[Guoba] 登录凭证重置后清理会话失败')
-      logger.error(error)
-    }
-    this.#notifyCredentialsReset(req, ip)
-    const error = new GuobaError('登录密码错误次数过多，登录凭证已重置，请使用验证码重新登录')
-    error.credentialsReset = true
+    const error = new GuobaError('登录密码错误次数过多，面板已冻结。请主人私聊机器人发送「#锅巴解冻」后重试')
+    error.frozen = true
     throw error
-  }
-
-  /** 登录凭证被重置时私聊通知主人 */
-  #notifyCredentialsReset(req, ip) {
-    try {
-      const now = new Date()
-      const pad = (value) => String(value).padStart(2, '0')
-      const time = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
-        + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
-      const lines = [
-        '[锅巴面板] 登录密码连续输错 3 次，登录凭证已重置。',
-        `时间：${time}`,
-        `来源 IP：${ip || '未知'}`,
-      ]
-      const ua = req?.headers?.['user-agent']
-      if (typeof ua === 'string' && ua) {
-        lines.push(`设备：${ua.length > 160 ? ua.slice(0, 160) + '…' : ua}`)
-      }
-      lines.push('请打开面板使用验证码重新登录，并设置新的账号密码。')
-      const message = lines.join('\n')
-      const target = cfg.get('auth.securityMaster')
-      // 指定了安全通知接收人时只发给他，发送失败也不改发其他主人
-      Promise.resolve(target
-        ? sendToMasterUser(message, target)
-        : sendToOneMaster(message)).catch(() => {})
-    } catch (error) {
-      logger.error('[Guoba] 登录凭证重置通知发送失败')
-      logger.error(error)
-    }
   }
 
   async login(req, body, loginService) {
@@ -407,7 +448,7 @@ export class LoginSecurityService extends Service {
       || username !== this.auth.username || !verifyPassword(password, this.auth.passwordHash)) {
       const attempts = await redis.incr(passwordKey)
       if (attempts >= Constant.LOGIN_PASSWORD_MAX_ATTEMPTS) {
-        // 连续错 3 次：重置登录凭证，之后只能靠验证码重新登录
+        // 连续错 3 次：冻结面板，只有主人能在聊天里解冻
         await redis.del(passwordKey)
         await this.handleTooManyPasswordFailures(req)
       }
@@ -459,7 +500,7 @@ export class LoginSecurityService extends Service {
   /**
    * 设置安全通知接收人。
    * 冻结、登录失败重置、二级密码输错的通知只发给他，验证码也只发给他，
-   * #锅巴解冻 / #锅巴重置密码 也只接受他。
+   * #锅巴解冻 / #锅巴重置账号 也只接受他。
    */
   async setSecurityMaster(currentPassword, userId, req) {
     await this.verifyPasswordForSensitiveAction(req, currentPassword)

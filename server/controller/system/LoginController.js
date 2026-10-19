@@ -124,17 +124,24 @@ export class LoginController extends ApiController {
     if (this.loginSecurityService.configured) return Result.error('旧版验证码登录已停用，请使用用户名和密码')
     const code = await this.loginService.codeLoginRequest()
     if (code) {
-      logger.mark('[Guoba] '
-        + chalk.yellow('您正在请求初始化验证码，若没有输出验证码，请将日志级别调整为 ')
-        + chalk.green('info')
-        + chalk.yellow(' 或以上')
-      )
-      logger.info('#'.repeat(54))
-      logger.info('# ' + chalk.green('[Guoba] 初始化验证码') + '                             #')
-      logger.info('# 您的初始化验证码为: ' + chalk.yellow(code) + '                 #')
-      logger.info('# 验证码五分钟内有效且失效前不会再次打印，请尽快输入 #')
-      logger.info('#'.repeat(54))
       const pushed = await this.loginService.sendCodeToMaster(code)
+      // 私聊发得出去就绝不把验证码写进日志 —— 日志文件本身也是能被读走的东西，
+      // 明文验证码等于把门钥匙摆在桌上。只有一条私聊都发不出去时才兜底打印，
+      // 否则主人会彻底锁在门外。
+      if (pushed > 0) {
+        logger.mark(`[Guoba] 初始化验证码已私聊发送给主人（${pushed} 个账号），请查看私聊消息`)
+      } else {
+        logger.mark('[Guoba] '
+          + chalk.yellow('验证码私聊发送失败，改为写入日志。若看不到下面的验证码，请将日志级别调整为 ')
+          + chalk.green('info')
+          + chalk.yellow(' 或以上')
+        )
+        logger.info('#'.repeat(54))
+        logger.info('# ' + chalk.green('[Guoba] 初始化验证码') + '                             #')
+        logger.info('# 您的初始化验证码为: ' + chalk.yellow(code) + '                 #')
+        logger.info('# 验证码五分钟内有效且失效前不会再次打印，请尽快输入 #')
+        logger.info('#'.repeat(54))
+      }
       return Result.ok({pushed}, '验证码已发送给主人')
     }
     return Result.error('code generate failed')
