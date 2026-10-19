@@ -1,4 +1,4 @@
-import { hasGenshin } from "./version.js"
+import { hasGenshin, hasPlugin } from "./version.js"
 
 let Restart
 try {
@@ -20,6 +20,13 @@ const importMockMys = async () => {
   MysUser = mys.MysUser
 }
 
+// 没有 genshin 但有 Mys-plugin 时，用 Mys 的数据库提供统计（替代写死 -1 的 mock）
+const importMysPluginMys = async () => {
+  const mys = await import("./mock/mys/index.js")
+  MysInfo = mys.MysInfo
+  MysUser = mys.MysUser
+}
+
 if (hasGenshin) {
   try {
     await importMys()
@@ -28,6 +35,9 @@ if (hasGenshin) {
     logger.error(e)
     await importMockMys()
   }
+} else if (hasPlugin("Mys-plugin")) {
+  await importMysPluginMys()
+  logger.mark("[Guoba] 未安装 genshin，统计已切换为 Mys-plugin 数据适配")
 } else {
   await importMockMys()
 }
