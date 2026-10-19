@@ -7,6 +7,39 @@ export async function reload() {
   if (!isInit) {
     incrVersion()
   }
+  // 子应用模式：宿主 server 不能关，只替换自己那一层挂载
+  if (Guoba.parentApp) {
+    const oldApp = Guoba.app
+    try {
+      const stack = Guoba.parentApp._router?.stack || Guoba.parentApp.router?.stack
+      if (Array.isArray(stack)) {
+        for (let i = stack.length - 1; i >= 0; i--) {
+          if (stack[i].handle === oldApp) stack.splice(i, 1)
+        }
+      }
+    } catch (e) {
+      logger.error('[Guoba] 重载时移除旧挂载失败', e)
+    }
+    delete Guoba.app
+    let newServer
+    try {
+      let {createServer} = await GI('#/index.js')
+      newServer = await createServer({isInit})
+    } catch (error) {
+      logger.error('[Guoba] 服务锅巴启动失败')
+      logger.error(decodeURI(error?.stack || String(error)))
+      return
+    }
+    let {app, server} = newServer
+    Guoba.app = app
+    Guoba.server = server
+    Guoba.reload = reload
+    if (!isInit) {
+      logger.mark('[Guoba] 服务重载成功~')
+    }
+    isInit = false
+    return
+  }
   // 首先关闭服务器
   let isClosed = await new Promise((resolve) => {
     if (!Guoba.server) {

@@ -14,7 +14,7 @@ import {
 import GIcon from '@/components/GIcon.vue'
 import { apiRestartBot, apiRestartGuoba } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { API_PREFIX, GUOBA_VERSION, ICP_NO, IS_V2, YUNZAI_VERSION } from '@/utils/env'
+import { API_PREFIX, GUOBA_VERSION, HOST_NAME, ICP_NO, IS_V2, YUNZAI_VERSION } from '@/utils/env'
 
 const auth = useAuthStore()
 
@@ -22,10 +22,22 @@ const restarting = ref('')
 
 const links = [
   {
-    title: '锅巴插件仓库',
-    desc: 'Guoba-Plugin 源码与 issue',
+    title: '当前仓库（QingYingX）',
+    desc: '本面板实际运行的 fork，改动在此',
+    url: 'https://github.com/QingYingX-Bot/guoba-plugin-next',
+    icon: 'ant-design:github-outlined',
+  },
+  {
+    title: '上游仓库（cchanlan）',
+    desc: 'guoba-plugin-next 上游，更新来源',
     url: 'https://github.com/cchanlan/guoba-plugin-next',
     icon: 'ant-design:code-outlined',
+  },
+  {
+    title: '原版仓库（guoba-yunzai）',
+    desc: 'Guoba-Plugin 最原始项目',
+    url: 'https://github.com/guoba-yunzai/guoba-plugin',
+    icon: 'ant-design:link-outlined',
   },
   {
     title: '插件索引',
@@ -35,11 +47,21 @@ const links = [
   },
 ]
 
-/**
- * 「运行环境」表的列宽策略。
- */
 const NOWRAP = { whiteSpace: 'nowrap' } as const
 const WRAP = { whiteSpace: 'normal', overflowWrap: 'anywhere' } as const
+
+/** 版本四卡 */
+const versionCards = computed(() => [
+  { label: '锅巴版本', value: `v${GUOBA_VERSION}`, icon: 'ant-design:appstore-outlined', color: '#b57bd8' },
+  { label: `${HOST_NAME} 版本`, value: YUNZAI_VERSION, icon: 'ant-design:rocket-outlined', color: '#4c8dff' },
+  { label: '接口版本', value: API_PREFIX, icon: 'ant-design:api-outlined', color: '#3cc2a0' },
+  { label: '登录账号', value: String(auth.user?.username ?? '-'), icon: 'ant-design:user-outlined', color: '#e0a34a' },
+])
+
+const envInfo = computed<EnvItem[]>(() => [
+  { label: 'Bot 昵称', value: auth.user?.realName || '-' },
+  { label: 'UA', value: navigator.userAgent, span: 2, wrap: true },
+])
 
 interface EnvItem {
   label: string
@@ -47,15 +69,6 @@ interface EnvItem {
   span?: number
   wrap?: boolean
 }
-
-const envInfo = computed<EnvItem[]>(() => [
-  { label: '锅巴版本', value: `v${GUOBA_VERSION}` },
-  { label: 'Yunzai 版本', value: YUNZAI_VERSION },
-  { label: '接口版本', value: API_PREFIX },
-  { label: '登录账号', value: String(auth.user?.username ?? '-') },
-  { label: 'Bot 昵称', value: auth.user?.realName || '-', span: 2 },
-  { label: 'UA', value: navigator.userAgent, span: 2, wrap: true },
-])
 
 function open(url: string) {
   window.open(url, '_blank', 'noopener')
@@ -97,46 +110,53 @@ function confirmRestart(type: 'guoba' | 'bot') {
           <h3 class="g-about-name">
             锅巴插件
             <Tag color="gold">v{{ GUOBA_VERSION }}</Tag>
+            <Tag color="blue">{{ HOST_NAME }} {{ YUNZAI_VERSION }}</Tag>
             <Tag v-if="IS_V2" color="orange">V2 兼容模式</Tag>
           </h3>
           <p class="g-about-desc">
-            兼容 Miao-Yunzai（V3、V4）与 TRSS-Yunzai，为 Yunzai 及其插件提供网页端配置能力。
+            兼容 Miao-Yunzai（V3、V4）、TRSS-Yunzai 与 JiuLi，为 Yunzai 及其插件提供网页端配置能力。
           </p>
         </div>
       </div>
     </Card>
 
-    <Row :gutter="[16, 16]">
-      <Col :xs="24" :lg="14">
-        <Card :bordered="false" title="运行环境">
-          <div class="g-about-env">
-            <Descriptions
-              :column="{ xs: 1, sm: 2 }"
-              size="small"
-              bordered
-              :label-style="NOWRAP"
-            >
-              <DescriptionsItem
-                v-for="item in envInfo"
-                :key="item.label"
-                :label="item.label"
-                :span="item.span"
-                :content-style="item.wrap ? WRAP : NOWRAP"
-              >
-                <!-- 版本号、UA 这些是报问题时要贴出去的，单独开选中 -->
-                <span
-                  class="g-about-val g-selectable"
-                  :class="{ 'is-ua': item.wrap }"
-                >{{ item.value }}</span>
-              </DescriptionsItem>
-            </Descriptions>
+    <Card :bordered="false" title="运行环境" class="g-section">
+      <Row :gutter="[16, 16]">
+        <Col v-for="item in versionCards" :key="item.label" :xs="12" :sm="12" :md="6">
+          <div class="g-metric">
+            <span class="g-metric-icon" :style="{ color: item.color, background: `${item.color}1f` }">
+              <GIcon :icon="item.icon" :size="18" />
+            </span>
+            <div class="g-metric-body">
+              <div class="g-metric-label">{{ item.label }}</div>
+              <div class="g-metric-value g-selectable">{{ item.value }}</div>
+            </div>
           </div>
-        </Card>
-      </Col>
+        </Col>
+      </Row>
+      <Descriptions
+        class="g-about-env"
+        :column="{ xs: 1, sm: 2 }"
+        size="small"
+        bordered
+        :label-style="NOWRAP"
+      >
+        <DescriptionsItem
+          v-for="item in envInfo"
+          :key="item.label"
+          :label="item.label"
+          :span="item.span"
+          :content-style="item.wrap ? WRAP : NOWRAP"
+        >
+          <span class="g-about-val g-selectable" :class="{ 'is-ua': item.wrap }">{{ item.value }}</span>
+        </DescriptionsItem>
+      </Descriptions>
+    </Card>
 
-      <Col :xs="24" :lg="10">
-        <Card :bordered="false" title="相关链接" class="g-about-links">
-          <div v-for="link in links" :key="link.url" class="g-link-row" @click="open(link.url)">
+    <Card :bordered="false" title="相关链接" class="g-section">
+      <Row :gutter="[16, 16]">
+        <Col v-for="link in links" :key="link.url" :xs="24" :sm="12" :md="6">
+          <div class="g-link-card" @click="open(link.url)">
             <GIcon :icon="link.icon" :size="18" class="g-link-icon" />
             <div class="g-link-text">
               <div class="g-link-title">{{ link.title }}</div>
@@ -144,23 +164,23 @@ function confirmRestart(type: 'guoba' | 'bot') {
             </div>
             <GIcon icon="ant-design:right-outlined" :size="12" class="g-link-arrow" />
           </div>
-        </Card>
+        </Col>
+      </Row>
+    </Card>
 
-        <Card :bordered="false" title="维护操作" class="g-about-ops">
-          <p class="g-ops-tip">改完配置若未生效，可尝试重启对应服务。</p>
-          <Space>
-            <Button :loading="restarting === 'guoba'" @click="confirmRestart('guoba')">
-              <GIcon icon="ant-design:sync-outlined" :size="13" />
-              <span class="g-btn-text">重启锅巴</span>
-            </Button>
-            <Button danger :loading="restarting === 'bot'" @click="confirmRestart('bot')">
-              <GIcon icon="ant-design:poweroff-outlined" :size="13" />
-              <span class="g-btn-text">重启 Bot</span>
-            </Button>
-          </Space>
-        </Card>
-      </Col>
-    </Row>
+    <Card :bordered="false" title="维护操作" class="g-section">
+      <p class="g-ops-tip">改完配置若未生效，可尝试重启对应服务。</p>
+      <Space>
+        <Button :loading="restarting === 'guoba'" @click="confirmRestart('guoba')">
+          <GIcon icon="ant-design:sync-outlined" :size="13" />
+          <span class="g-btn-text">重启锅巴</span>
+        </Button>
+        <Button danger :loading="restarting === 'bot'" @click="confirmRestart('bot')">
+          <GIcon icon="ant-design:poweroff-outlined" :size="13" />
+          <span class="g-btn-text">重启 Bot</span>
+        </Button>
+      </Space>
+    </Card>
 
     <p v-if="ICP_NO" class="g-about-icp">{{ ICP_NO }}</p>
   </div>
@@ -169,6 +189,10 @@ function confirmRestart(type: 'guoba' | 'bot') {
 <style scoped>
 .g-page-head {
   margin-bottom: 14px;
+}
+
+.g-section {
+  margin-bottom: 16px;
 }
 
 .g-about-hero {
@@ -193,6 +217,7 @@ function confirmRestart(type: 'guoba' | 'bot') {
 .g-about-name {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 0 0 6px;
   font-size: 18px;
@@ -206,7 +231,39 @@ function confirmRestart(type: 'guoba' | 'bot') {
   color: var(--g-text-sub);
 }
 
+.g-metric {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--g-bg-soft);
+}
+
+.g-metric-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.g-metric-label {
+  font-size: 12px;
+  color: var(--g-text-dim);
+}
+
+.g-metric-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--g-text);
+  white-space: nowrap;
+}
+
 .g-about-env {
+  margin-top: 16px;
   overflow-x: auto;
 }
 
@@ -219,26 +276,26 @@ function confirmRestart(type: 'guoba' | 'bot') {
   overflow-wrap: anywhere;
 }
 
-.g-about-links {
-  margin-bottom: 16px;
-}
-
-.g-link-row {
+.g-link-card {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 8px;
+  padding: 12px;
   border-radius: 8px;
+  border: 1px solid var(--g-bg-soft);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  height: 100%;
 }
 
-.g-link-row:hover {
+.g-link-card:hover {
   background: var(--g-bg-soft);
+  border-color: var(--g-brand);
 }
 
 .g-link-icon {
   color: var(--g-brand);
+  flex-shrink: 0;
 }
 
 .g-link-text {
@@ -254,10 +311,16 @@ function confirmRestart(type: 'guoba' | 'bot') {
 .g-link-desc {
   font-size: 12px;
   color: var(--g-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .g-link-arrow {
   color: var(--g-text-dim);
+  flex-shrink: 0;
 }
 
 .g-ops-tip {

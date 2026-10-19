@@ -60,7 +60,30 @@ export default class GuobaApplication {
    */
   static async run(args) {
     const app = args?.app ? args.app : express()
-    const server = args?.server ? args.server : await getListenFn(args)(app, args.port);
+    const parentApp = args?.parentApp
+    let server
+    if (parentApp) {
+      // 子应用模式：挂到宿主 express 的指定前缀下，复用宿主的 http server（不占用端口）
+      const getStack = () => parentApp._router?.stack || parentApp.router?.stack
+      const mountList = [args.mount || '/', ...(args.mountAliases || [])].filter((v, i, arr) => v && arr.indexOf(v) === i)
+      for (const prefix of mountList) parentApp.use(prefix, app)
+      // 宿主可能在插件初始化之后才注册兜底 302，把刚挂上去的层直接提到栈顶。
+      // 锅巴只处理自己前缀，其余请求原样 next() 下去，不影响宿主。
+      const stack = getStack()
+      const count = mountList.length
+      if (Array.isArray(stack) && stack.length >= count) {
+        const added = stack.slice(-count)
+        stack.length -= count
+        stack.unshift(...added)
+        const names = stack.slice(0, 6).map((l) => l.name || String(l.regexp || '').slice(0, 30))
+        logger.debug(`[Guoba] 挂载层已前置 count=${count} total=${stack.length} 前6层=${JSON.stringify(names)}`)
+      } else {
+        logger.mark(`[Guoba] 挂载层前置失败 count=${count} total=${Array.isArray(stack) ? stack.length : -1}`)
+      }
+      server = args?.server || null
+    } else {
+      server = args?.server ? args.server : await getListenFn(args)(app, args.port)
+    }
     const guobaApp = new GuobaApplication(args, app, server);
 
     if (typeof args.created === 'function') {
@@ -95,6 +118,26 @@ export default class GuobaApplication {
     this._args = args;
     this.app = app
     this.server = server
+    /** 子应用模式下宿主的 express（JiuLi 等），重载时用它替换挂载层 */
+    this.parentApp = args?.parentApp
+    /** 挂载前缀 */
+    this.mount = args?.mount
+  }
+
+  /** 从宿主 express 上摘掉自己（重载前调用） */
+  unmount() {
+    const parent = this.parentApp
+    if (!parent) return false
+    const stack = parent._router?.stack || parent.router?.stack
+    if (!Array.isArray(stack)) return false
+    let removed = 0
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if (stack[i].handle === this.app) {
+        stack.splice(i, 1)
+        removed++
+      }
+    }
+    return removed > 0
   }
 
 }

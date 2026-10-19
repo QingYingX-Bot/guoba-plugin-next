@@ -31,6 +31,9 @@ export const API_BASE = `${REAL_MOUNT_PREFIX}/api`
 /** Yunzai 版本 */
 export const YUNZAI_VERSION: string = botConf.VERSION ?? '-'
 
+/** 宿主名（JiuLi / TRSS / Miao-Yunzai 等） */
+export const HOST_NAME: string = botConf.HOST_NAME ?? 'Yunzai'
+
 /** 锅巴版本 */
 export const GUOBA_VERSION: string = guobaConf.VERSION ?? botConf.GUOBA_VERSION ?? '-'
 

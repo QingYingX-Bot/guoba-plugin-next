@@ -1,7 +1,7 @@
 import lodash from "lodash";
 import {Preload} from "#guoba.framework";
 import {cfg, _version, Constant, _paths} from "#guoba.platform";
-import {isV3, isV4, yunzaiVersion} from '#guoba.adapter'
+import {isV3, isV4, yunzaiVersion, hostName} from '#guoba.adapter'
 import {readTheme} from '../utils/themeConfig.js'
 
 // noinspection JSUnusedGlobalSymbols
@@ -44,6 +44,7 @@ export default class ConfigPreload extends Preload {
   get __YUNZAI_BOT_CONF__() {
     return `window["__YUNZAI_BOT_CONF__"] = ${JSON.stringify({
       VERSION: yunzaiVersion,
+      HOST_NAME: hostName,
       GUOBA_VERSION: _version,
       API_PREFIX: (isV3 || isV4) ? '/v3' : '/v2',
       TOKEN_KEY: Constant.TOKEN_KEY,

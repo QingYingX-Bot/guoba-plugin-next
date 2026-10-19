@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { hasGenshin, hasPlugin } from "./version.js"
 
 let Restart
@@ -10,6 +12,15 @@ try {
 let MysInfo, MysUser
 
 const importMys = async () => {
+  // genshin 残缺（目录在但关键文件缺失）时直接走 mock：动态 import 抛
+  // ERR_MODULE_NOT_FOUND 会经 JiuLi 的解析 hook + HTTP 错误兜底打出一大条
+  // ERROR 堆栈，这里提前探测把噪音消在源头
+  const target = path.resolve(import.meta.dirname, '../../../genshin/model/mys/mysInfo.js')
+  if (!fs.existsSync(target)) {
+    logger.mark('[Guoba] genshin 残缺（缺少 model/mys/mysInfo.js），建议清理该目录，锅巴正常启动不受影响')
+    await importMockMys()
+    return
+  }
   MysInfo = (await import("../../../genshin/model/mys/mysInfo.js")).default
   MysUser = (await import("../../../genshin/model/mys/MysUser.js")).default
 }

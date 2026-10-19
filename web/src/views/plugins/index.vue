@@ -40,7 +40,7 @@ const loading = ref(true)
 const refreshing = ref(false)
 const plugins = ref<PluginItem[]>([])
 const keyword = ref('')
-const filter = ref<'all' | 'installed' | 'uninstalled' | 'configurable' | 'updatable'>('all')
+const filter = ref<'all' | 'installed' | 'uninstalled' | 'configurable' | 'updatable'>('installed')
 
 const installOpen = ref(false)
 const installLink = ref('')
@@ -72,6 +72,8 @@ const gitLog = ref<InstanceType<typeof GitLogModal> | null>(null)
  * 所以要用后端单独给的 `dir` 去对，不然这些插件卡片上就没有分支、更新和日志入口。
  */
 const gitMap = ref<Record<string, PluginGitInfo>>({})
+/** git 信息是独立接口，和插件列表异步到齐；没到齐前先渲染骨架，避免卡片闪一下长出 git 块 */
+const gitLoading = ref(true)
 
 /** 有更新的插件（按上次检查的结果算） */
 const updatable = computed(() => Object.values(gitMap.value).filter((it) => it.behind > 0))
@@ -94,12 +96,15 @@ function gitOf(p: PluginItem): PluginGitInfo | undefined {
 }
 
 async function loadGit() {
+  gitLoading.value = true
   try {
     const items = await apiPluginGitList()
     gitMap.value = Object.fromEntries(items.map((it) => [it.name.toLowerCase(), it]))
   } catch {
     // 读不到就当没有，卡片上不显示 git 信息
     gitMap.value = {}
+  } finally {
+    gitLoading.value = false
   }
 }
 
@@ -279,15 +284,15 @@ onMounted(() => {
       </template>
     </div>
 
-    <Row v-if="loading" :gutter="[16, 16]">
+    <Row v-if="loading || gitLoading" :gutter="[16, 16]">
       <Col v-for="i in 8" :key="i" :xs="24" :sm="12" :lg="8" :xxl="6">
         <Card :bordered="false"><Skeleton active :paragraph="{ rows: 2 }" /></Card>
       </Col>
     </Row>
 
-    <Empty v-else-if="!list.length" :description="emptyText" />
+    <Empty v-else-if="!list.length && !gitLoading" :description="emptyText" />
 
-    <Row v-else :gutter="[16, 16]">
+    <Row v-else-if="!gitLoading" :gutter="[16, 16]">
       <Col v-for="p in list" :key="p.name" :xs="24" :sm="12" :lg="8" :xxl="6">
         <Card :bordered="false" class="g-plugin-card">
           <div class="g-plugin-top">
@@ -309,13 +314,16 @@ onMounted(() => {
             <Tag v-if="p.hasConfig" color="gold">可配置</Tag>
             <Tag v-if="p.isDeleted" color="red">已废弃</Tag>
             <Tag v-if="gitOf(p)?.behind" color="orange">可更新 {{ gitOf(p)!.behind }}</Tag>
+            <Tooltip v-if="gitOf(p)?.upstreamBehind" :title="`上游仓库有 ${gitOf(p)!.upstreamBehind} 个新提交，可到 GitHub 对比页查看`">
+              <Tag color="purple">上游 +{{ gitOf(p)!.upstreamBehind }}</Tag>
+            </Tooltip>
             <Tooltip v-if="gitOf(p)?.dirty" :title="gitOf(p)!.changed.map((c) => c.file).join('、')">
               <Tag color="red">本地有改动</Tag>
             </Tooltip>
           </div>
 
           <!-- git 信息：分支 / 当前提交 / 上次检查时间，非 git 仓库说明原因 -->
-          <div v-if="p.installed && gitOf(p)" class="g-plugin-git">
+          <div v-if="p.installed && gitOf(p)" class="g-plugin-gitbox">
             <template v-if="gitOf(p)!.updatable">
               <GIcon icon="ant-design:branches-outlined" :size="12" />
               <span>{{ gitOf(p)!.branch }}</span>
@@ -328,7 +336,6 @@ onMounted(() => {
                 不能自动更新
               </span>
             </Tooltip>
-          </div>
 
           <!-- 当前装的是哪一版：提交标题一行截断，下面跟作者和时间 -->
           <div v-if="p.installed && gitOf(p)?.lastCommit" class="g-plugin-commit">
@@ -338,6 +345,7 @@ onMounted(() => {
             <div class="g-plugin-commit-meta">
               {{ gitOf(p)!.lastCommit!.author }} · {{ gitOf(p)!.lastCommit!.date }}
             </div>
+          </div>
           </div>
 
           <div class="g-plugin-actions">
@@ -434,20 +442,40 @@ onMounted(() => {
 
 <style scoped>
 /* git 信息条：分支 + 短 hash + 上次检查时间，字号压小，不跟标签抢注意力 */
+.g-plugin-gitbox {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--g-bg-soft);
+  min-width: 0;
+}
+
+.g-plugin-gitbox > * {
+  min-width: 0;
+}
+
+.g-plugin-gitbox .g-plugin-commit {
+  flex: 0 0 100%;
+}
+
 .g-plugin-git {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
+  gap: 6px;
   font-size: 12px;
   color: var(--g-text-sub);
 }
 
 .g-plugin-git code {
-  padding: 0 4px;
+  padding: 1px 6px;
   border-radius: 3px;
-  background: var(--g-bg-soft);
+  background: var(--g-bg-card);
+  color: var(--g-text);
 }
 
 .g-plugin-git-dim {
@@ -459,15 +487,15 @@ onMounted(() => {
 
 /* 当前版本那条提交：标题裁成一行，保证卡片高度还是齐的 */
 .g-plugin-commit {
-  margin-top: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--g-bg-soft);
+  margin-top: 4px;
 }
 
 .g-plugin-commit-subject {
   font-size: 12px;
   line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--g-text-sub);
   overflow: hidden;
   white-space: nowrap;
@@ -475,6 +503,9 @@ onMounted(() => {
 }
 
 .g-plugin-commit-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   margin-top: 2px;
   font-size: 11px;
   color: var(--g-text-dim);

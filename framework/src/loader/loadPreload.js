@@ -36,11 +36,12 @@ async function hookAppPreloads(guobaApp, preload) {
   guobaApp.app.use(async (req, res, next) => {
     const flag = await preload.hook(req)
     if (flag) {
-      // 替换tag
-      const tag = instance.createScriptTag()
+      // 替换tag：直接内联 preload 内容，避免子应用模式下 /preload/*.js 的路径匹配问题
+      const inline = await instance.getPreloadContent()
+      const tag = `<script>${inline}</script>`
       const content = fs.readFileSync(preload.staticPath, 'utf8').replace(reg, tag)
       res.send(content)
-    } else if (req.path === instance.scriptSrc) {
+    } else if (req.path === instance.scriptSrc || req.path.endsWith(path.basename(instance.scriptSrc))) {
       const content = await instance.getPreloadContent()
       res.setHeader('Content-Type', 'text/javascript; charset=utf-8')
       res.send(content)

@@ -1,6 +1,6 @@
 import path from 'node:path'
 import {
-  commitsBetween, fastForward, fetchRepo, firstLine, readRepoInfo,
+  commitsBetween, ensureUpstreamRemote, fastForward, fetchRepo, firstLine, readRepoInfo,
   resetToUpstream, runGit, stashPop, stashPush,
 } from './gitRepo.js'
 
@@ -46,6 +46,18 @@ export async function updateRepo(dir, {mode = 'safe', log = () => {}, onSpawn} =
     const reason = firstLine(fetched.stderr) || `git fetch 退出码 ${fetched.code}`
     log(`拉取失败 —— ${reason}`, 'error')
     return {...out, status: 'failed', reason: `拉取失败：${reason}`}
+  }
+
+  // fork 支持：origin 是 GitHub fork 时，把上游仓库登记为 upstream 并拉取它的引用
+  // （失败不阻塞 —— upstream 信息只是提示，能不能更新取决于 origin）
+  const originRes = await runGit(['remote', 'get-url', 'origin'], {cwd: dir, timeout: 10000})
+  if (originRes.ok) {
+    const upstreamRepo = await ensureUpstreamRemote(dir, originRes.stdout.trim())
+    if (upstreamRepo) {
+      const upFetch = await fetchRepo(dir, 'upstream', {onSpawn})
+      if (upFetch.ok) log(`已拉取上游 ${upstreamRepo} 的最新引用`)
+      else log(`上游拉取失败，不影响本仓库的更新检查`, 'warn')
+    }
   }
 
   info = await readRepoInfo(dir)

@@ -236,6 +236,14 @@ const userMenu = () =>
   background: var(--g-brand);
   color: #1a1408;
   font-weight: 600;
+  overflow: hidden;
+}
+
+/* 有图片时铺满圆，不再露出品牌色底圈 */
+.g-avatar :deep(img) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .g-user-name {

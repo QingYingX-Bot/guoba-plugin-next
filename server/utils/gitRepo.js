@@ -154,10 +154,50 @@ export function parseStatus(stdout) {
  * @param {string} dir 仓库目录
  * @return {Promise<object>} 见下面的字段；`updatable` 为 false 时 `reason` 说明原因
  */
+/**
+ * 检测 origin 是否是 GitHub fork，是的话自动把上游仓库登记为 `upstream` remote。
+ * 返回上游仓库全名（owner/repo），不是 fork 或检测失败返回空串。
+ *
+ * 只在「检查更新」时调用（upstream remote 不存在才走网络），
+ * GitHub API 无 token 限流 60 次/小时，缓存靠 upstream remote 本身 —— 加过就不再查。
+ */
+export async function ensureUpstreamRemote(dir, originUrl) {
+  if (!originUrl || !/github\.com/i.test(originUrl)) return ''
+  const m = String(originUrl).match(/github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i)
+  if (!m) return ''
+  const [, owner, repo] = m
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {'User-Agent': 'guoba-plugin', Accept: 'application/vnd.github+json'},
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return ''
+    const data = await res.json()
+    if (!data?.fork || !data?.parent?.full_name) return ''
+    const parent = data.parent.full_name
+    const upUrl = `https://github.com/${parent}.git`
+    const has = await runGit(['remote', 'get-url', 'upstream'], {cwd: dir, timeout: 10000})
+    if (has.ok) {
+      const existing = has.stdout.trim()
+      if (existing !== upUrl) {
+        await runGit(['remote', 'set-url', 'upstream', upUrl], {cwd: dir, timeout: 10000})
+      }
+    } else {
+      await runGit(['remote', 'add', 'upstream', upUrl], {cwd: dir, timeout: 10000})
+    }
+    logger.mark(`[Guoba] ${repo} 是 fork，上游登记为 ${parent}`)
+    return parent
+  } catch (e) {
+    logger.warn('[Guoba] fork 检测失败（GitHub API 可能限流）：', e?.message || e)
+    return ''
+  }
+}
+
 export async function readRepoInfo(dir) {
   const base = {
     isRepo: false, branch: '', detached: false, commit: '', shortCommit: '',
     upstream: '', remote: '', remoteUrl: '', ahead: 0, behind: 0,
+    fork: false, upstreamBehind: 0, upstreamRepo: '',
     dirty: false, changed: [], untracked: [], updatable: false, reason: '',
     lastCommit: null,
   }
@@ -206,6 +246,24 @@ export async function readRepoInfo(dir) {
     return info
   }
   info.upstream = up.stdout.trim()
+
+  // fork 支持：登记了 upstream remote 就把上游落后的提交数算出来（不联网，用本地引用）
+  try {
+    const upUrl = await runGit(['remote', 'get-url', 'upstream'], {cwd: dir, timeout: 10000})
+    if (upUrl.ok) {
+      info.fork = true
+      info.upstreamRepo = String(upUrl.stdout.trim() || '')
+        .replace(/^https?:\/\/github\.com\//i, '')
+        .replace(/\.git$/, '')
+      const headUp = await runGit(['rev-parse', '--verify', '--quiet', 'upstream/main'], {cwd: dir, timeout: 10000})
+      const upBranch = headUp.ok ? 'upstream/main' : 'upstream/master'
+      const upCheck = await runGit(['rev-parse', '--verify', '--quiet', upBranch], {cwd: dir, timeout: 10000})
+      if (upCheck.ok) {
+        const count = await runGit(['rev-list', '--count', `HEAD..${upBranch}`], {cwd: dir, timeout: 15000})
+        if (count.ok) info.upstreamBehind = Number(count.stdout.trim()) || 0
+      }
+    }
+  } catch { /* fork 信息算不出来不影响主流程 */ }
   // 上游挂在哪个 remote 上要问 config，不能假设是 origin —— 一个仓库挂多个 remote 时
   // （比如同时推 gitcode 和 github），origin 很可能是别人的上游仓库，fetch 它是白跑
   const remoteRes = await runGit(['config', '--get', `branch.${info.branch}.remote`], {cwd: dir, timeout: 15000})

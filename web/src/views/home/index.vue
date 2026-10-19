@@ -18,7 +18,7 @@ import {
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useBrandColor } from '@/theme/useBrandColor'
-import { GUOBA_VERSION, IS_V2, YUNZAI_VERSION } from '@/utils/env'
+import { GUOBA_VERSION, IS_V2, YUNZAI_VERSION , HOST_NAME} from '@/utils/env'
 import type { HomeData, MsgStat, SystemStatus } from '@/types'
 
 /** 状态轮询间隔；消息统计变化慢，按 6 倍间隔刷 */
@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
           </p>
           <div class="g-hero-tags">
             <Tag :color="brand">锅巴 v{{ GUOBA_VERSION }}</Tag>
-            <Tag>Yunzai {{ YUNZAI_VERSION }}</Tag>
+            <Tag>{{ HOST_NAME }} {{ YUNZAI_VERSION }}</Tag>
             <Tag v-if="IS_V2" color="orange">V2 兼容模式</Tag>
             <Tag color="blue" class="g-weather-tag" @click="openCityModal">
               <GIcon icon="ant-design:cloud-outlined" :size="12" />

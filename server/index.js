@@ -41,10 +41,33 @@ export async function createServer({isInit}) {
     }
   }
 
+  // 子应用模式：宿主（JiuLi 等）已经提供了 express 实例，直接挂上去，不自己监听端口。
+  // 这样重载不会关掉宿主的 server，也不会出现端口抢占和空窗期。
+  const hostExpress = globalThis.Bot?.express
+  const hostServer = globalThis.Bot?.server
+  if (hostExpress && typeof hostExpress.use === 'function') {
+    logger.mark('[Guoba] 检测到宿主 express，以子应用方式挂载（不占用端口）')
+    Guoba.parentApp = hostExpress
+    args.parentApp = hostExpress
+    args.mount = _paths.server.realMountPrefix
+    args.mountAliases = ["/guoba"]
+    // 关键：清掉 isTRSS 分支可能设置的 args.app，否则会变成"宿主 app 挂到自己身上"
+    args.app = null
+    args.server = hostServer || null
+    try {
+      if (Array.isArray(hostExpress.skip_auth)) {
+        hostExpress.skip_auth.push(args.mount, ...args.mountAliases)
+      }
+    } catch { /* ignore */ }
+  } else {
+    delete Guoba.parentApp
+  }
+
   // 启动服务
   const application = await GuobaApplication.run({
     ...args,
-    prefix: _paths.server.realMountPrefix,
+    // 子应用模式下父层已经切掉了挂载前缀，锅巴内部应按根路径处理
+    prefix: args.parentApp ? "/" : _paths.server.realMountPrefix,
     staticPath: _paths.staticPath,
     created: appCreated,
     componentPaths: [
@@ -56,7 +79,13 @@ export async function createServer({isInit}) {
     preloads: [
       {
         code: `PRELOAD_JS`,
-        hook: (req) => req.path === realRoot || req.path === realRoot + 'index.html',
+        hook: (req) => {
+          // 子应用模式下父层已切掉挂载前缀，req.path 是 / 或 /index.html；
+          // 独立端口模式下是 realRoot 或 realRoot + 'index.html'，两种都放行
+          const path = req.path || req.originalUrl
+          return path === realRoot || path === realRoot + 'index.html' ||
+                 path === '/' || path === '/index.html'
+        },
         path: path.join(_paths.pluginRoot, 'server/preload/ConfigPreload.js'),
         staticPath: path.join(_paths.staticPath, 'index.html'),
       }
