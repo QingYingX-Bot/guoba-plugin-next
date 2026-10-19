@@ -67,8 +67,10 @@ export default class MiaoPluginV1Service extends IMiaoPluginService {
   saveHelpSetting(bodyParams, files) {
     let {helpCfg, helpList} = bodyParams
     let {cfgPath, iconPath, mainImgPath} = this.miaoPath
-    let content = `export const helpCfg = ${helpCfg}\n`
-    content += `export const helpList = ${helpList}`
+    // 两个字段都是前端传来的 JSON 文本，解析后再序列化，避免把任意 js 拼进 help-cfg.js
+    let content = `export const helpCfg = ${JSON.stringify(JSON.parse(helpCfg), null, 2)}
+`
+    content += `export const helpList = ${JSON.stringify(JSON.parse(helpList), null, 2)}`
     fs.writeFileSync(cfgPath, content, 'utf-8')
     let [iconFile, mainFile] = files
     moveFile(iconFile.path, iconPath)

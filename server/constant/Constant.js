@@ -30,6 +30,9 @@ export default {
   FREEZE_MAX_ATTEMPTS: 3,
   // 冻结状态存在 redis 里，不设过期，靠 #锅巴解冻 解除
   FROZEN_KEY: 'frozen',
+  // 登录密码连错导致的冻结自动过期（秒）。攻击者能随手触发冻结，
+  // 不设过期的话，机器人掉线时主人就没法解冻、面板会被永久锁死。
+  LOGIN_FREEZE_SECONDS: 900,
   // 冻结期间所有接口返回的业务码（HTTP 423）
   FROZEN_CODE: 4230,
   // 登录密码连错 3 次：登录凭证被重置，前端据此切到验证码登录

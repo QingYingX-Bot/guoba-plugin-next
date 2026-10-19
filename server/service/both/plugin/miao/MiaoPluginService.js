@@ -251,6 +251,24 @@ export default class MiaoPluginService extends IMiaoPluginService {
     return ''
   }
 
+  /**
+   * 皮肤目录。themeName 来自请求，必须挡住 ../ 之类的穿越 ——
+   * 这里写的是 plugins/miao-plugin 下的 js/png，穿出去就等于改代码。
+   */
+  #themeDir(themeName) {
+    let name = String(themeName ?? '').trim()
+    if (!name) name = 'default'
+    if (!/^[\w一-龥.-]+$/.test(name) || name === '.' || name === '..' || name.startsWith('..')) {
+      throw new GuobaError('皮肤名不合法')
+    }
+    let base = path.resolve(this.miaoPath.themePath)
+    let dir = path.resolve(base, name)
+    if (dir !== base && !dir.startsWith(base + path.sep)) {
+      throw new GuobaError('皮肤名不合法')
+    }
+    return dir
+  }
+
   getThemeNames() {
     let {themePath} = this.miaoPath
     let names = []
@@ -266,12 +284,15 @@ export default class MiaoPluginService extends IMiaoPluginService {
   saveHelpSetting(bodyParams, files) {
     let {helpCfg, helpList} = bodyParams
     helpCfg = JSON.parse(helpCfg)
+    // helpList 是前端传来的 JSON 文本：必须解析后再序列化，
+    // 直接拼进源码就等于让人往 help.js 里写任意 js（该文件会被 miao 插件 import）
+    helpList = JSON.parse(helpList)
     if (Array.isArray(helpCfg.theme) && helpCfg.theme.length === 0) {
       helpCfg.theme = 'all'
     }
     let {helpCfgPath, iconPath} = this.miaoPath
     let content = `export const helpCfg = ${JSON.stringify(helpCfg, null, 2)}\n`
-    content += `export const helpList = ${helpList}`
+    content += `export const helpList = ${JSON.stringify(helpList, null, 2)}`
     fs.writeFileSync(helpCfgPath, content, 'utf-8')
     if (Array.isArray(files) && files.length > 0) {
       let [iconFile] = files
@@ -300,7 +321,7 @@ export default class MiaoPluginService extends IMiaoPluginService {
     let {themeName} = (params || {})
     if (!themeName) themeName = 'default'
     let {Data} = await this.getMiaoUtils()
-    let themeConfigPath = path.join(this.miaoPath.themePath, themeName, 'config.js')
+    let themeConfigPath = path.join(this.#themeDir(themeName), 'config.js')
     if (!fs.existsSync(themeConfigPath)) {
       themeName = 'default'
     }
@@ -318,13 +339,13 @@ export default class MiaoPluginService extends IMiaoPluginService {
     let themeStyle = (await Data.importModule(`resources/help/theme/${themeName}/config.js`)).style || {}
     let merge = lodash.merge({}, defaultStyle, themeStyle, config)
     let content = `export const style = ${JSON.stringify(merge, null, 2)}`
-    let savePath = path.join(this.miaoPath.themePath, themeName, 'config.js')
+    let savePath = path.join(this.#themeDir(themeName), 'config.js')
     fs.writeFileSync(savePath, content, 'utf-8')
   }
 
   async addHelpTheme(params, files) {
     let {themeName} = params
-    let themePath = path.join(this.miaoPath.themePath, themeName)
+    let themePath = this.#themeDir(themeName)
     if (fs.existsSync(themePath)) {
       throw new GuobaError(`${themeName} 已存在！`)
     }
@@ -343,7 +364,7 @@ export default class MiaoPluginService extends IMiaoPluginService {
 
   async editHelpTheme(params, files) {
     let {themeName, resetBg} = params
-    let themePath = path.join(this.miaoPath.themePath, themeName)
+    let themePath = this.#themeDir(themeName)
     if (!fs.existsSync(themePath)) {
       throw new GuobaError(`${themeName} 不存在！`)
     }
@@ -376,7 +397,7 @@ export default class MiaoPluginService extends IMiaoPluginService {
     if (themeName === 'default') {
       throw new GuobaError(`默认皮肤不可删除！`)
     }
-    let themePath = path.join(this.miaoPath.themePath, themeName)
+    let themePath = this.#themeDir(themeName)
     fs.rmSync(themePath, {recursive: true})
   }
 
@@ -387,7 +408,7 @@ export default class MiaoPluginService extends IMiaoPluginService {
   getThemeMainPath(query) {
     let {themeName} = (query || {})
     if (!themeName) themeName = 'default'
-    let themeMainPath = path.join(this.miaoPath.themePath, themeName, 'main.png')
+    let themeMainPath = path.join(this.#themeDir(themeName), 'main.png')
     if (fs.existsSync(themeMainPath)) {
       return themeMainPath
     }
@@ -401,7 +422,7 @@ export default class MiaoPluginService extends IMiaoPluginService {
   getThemeBgPath(query) {
     let {themeName} = (query || {})
     if (themeName) {
-      let themeBgPath = path.join(this.miaoPath.themePath, themeName, 'bg.jpg')
+      let themeBgPath = path.join(this.#themeDir(themeName), 'bg.jpg')
       if (fs.existsSync(themeBgPath)) {
         return themeBgPath
       }
