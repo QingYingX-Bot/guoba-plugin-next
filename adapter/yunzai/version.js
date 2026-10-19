@@ -102,6 +102,18 @@ function checkVersion() {
 
   const isTRSS = detectTRSSLike(name)
 
+  /**
+   * TRSS 系宿主（含 JiuLi）的版本号跟 Miao-Yunzai v4 不是一回事：
+   * JiuLi 4.x 依旧是 TRSS 能力，强行按前缀 4 判成 isV4 会去引 Miao v4 专属的
+   * @yunzaijs/mys，插件直接加载失败。命中 TRSS 能力时统一走 v3 适配。
+   */
+  if (isTRSS) {
+    isV2 = false
+    isV3 = true
+    isV4 = false
+    noSupport = false
+  }
+
   // v4 need check genshin
   const hasGenshin = hasPlugin('genshin')
 
