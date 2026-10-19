@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import {pipeline} from 'node:stream/promises'
 import {autowired, Result} from '#guoba.framework'
@@ -85,7 +86,22 @@ export class FileController extends ApiController {
         // 解析不了就当普通上传，不因为一个坏字段整单失败
       }
     }
-    return Result.ok(await this.fileService.upload(rel, req.files, list))
+    try {
+      return Result.ok(await this.fileService.upload(rel, req.files, list))
+    } catch (err) {
+      // 这一单失败时 multer 已经把临时文件写进 data/upload_tmp 了，
+      // 不清理的话每失败一次就留一堆垃圾，攒久了同样会把磁盘撑满。
+      this.#cleanupTempFiles(req)
+      throw err
+    }
+  }
+
+  /** 清掉本次请求落在 upload_tmp 里的临时文件 */
+  #cleanupTempFiles(req) {
+    const files = Array.isArray(req.files) ? req.files : []
+    for (const f of files) {
+      if (f?.path) fs.rmSync(f.path, {force: true})
+    }
   }
 
   /** 下载 */
