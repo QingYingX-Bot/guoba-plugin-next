@@ -34,13 +34,20 @@ export function isPortFrozen() {
   return state().frozen
 }
 
-/** 冻结时断开已经建立的 WS 连接：机器人会按回环路径自动重连，旁路连接则再也进不来 */
+/** 冻结时断开已经建立的 WS 连接：旁路连接再也进不来，但协议端必须留着。
+ *
+ * 这里**不能无差别 terminate**：NapCat 的 OneBot 连接是同一个 wss 上的客户端
+ * （从回环连过来的），踢掉它机器人就掉线，主人连「#锅巴解冻」都发不进来 ——
+ * 而冻结是可以由任何人「连续输错 3 次密码」触发的，等于给了外部一个踢线的按钮。
+ * 判定和端口闸门保持一致：回环 + OneBotv11 路径放行。
+ */
 export function closeExistingWebSockets() {
   try {
     const clients = globalThis.Bot?.wss?.clients
     if (!clients || typeof clients[Symbol.iterator] !== 'function') return
     for (const client of clients) {
       try {
+        if (isBotConnection(client)) continue
         client.terminate?.()
       } catch {
         // 单个连接关不掉不影响其它
@@ -49,6 +56,17 @@ export function closeExistingWebSockets() {
   } catch {
     // 宿主没有 wss 就跳过，端口闸门仍然生效
   }
+}
+
+/** 这条连接是不是机器人协议端自己（回环 + OneBotv11 路径） */
+function isBotConnection(client) {
+  const socket = client?._socket ?? client?.socket ?? client?.conn?.socket
+  const address = socket?.remoteAddress
+  if (!isLoopback(address)) return false
+  const req = client?.upgradeReq ?? client?.req
+  const url = req?.url
+  if (!url) return true
+  return wsFirstSegment({url}) === BOT_WS_PATH
 }
 
 function isLoopback(address) {
