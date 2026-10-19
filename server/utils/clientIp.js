@@ -1,7 +1,7 @@
 import net from 'net'
 import { cfg } from '#guoba.platform'
 
-function normalize(value) {
+export function normalize(value) {
   if (typeof value !== 'string') return ''
   let ip = value.trim()
   if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1)
@@ -22,7 +22,7 @@ function ipv4ToNumber(ip) {
   return ip.split('.').reduce((sum, part) => sum * 256 + Number(part), 0)
 }
 
-function inCidr(ip, cidr) {
+export function inCidr(ip, cidr) {
   const [base, bitsText] = String(cidr).split('/')
   const normalized = normalize(base)
   if (!normalized || net.isIP(normalized) !== net.isIP(ip)) return false
