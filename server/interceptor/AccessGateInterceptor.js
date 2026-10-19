@@ -21,15 +21,34 @@ const PROTECTED = [
   // 登录安全：改登录密码、可信 IP / 设备都在这里
   /^\/api\/login\/security(\/|$)/,
   // 装插件 / 改插件配置 / 插件动作 = 落地可执行代码
-  /^\/api\/plugin\/install$/,
-  /^\/api\/plugin\/uninstall$/,
+  // 路由默认不启用 strict，/install/ 这种尾斜杠也会命中，必须一起拦
+  /^\/api\/plugin\/install(\/|$)/,
+  /^\/api\/plugin\/uninstall(\/|$)/,
   /^\/api\/plugin\/update(\/|$)/,
   /^\/api\/plugin\/do(\/|$)/,
-  /^\/api\/plugin\/s\/[^/]+\/config$/,
+  // 用 .* 而不是 [^/]+：%2F 解码后会多出斜杠，插件名非法但路由仍能命中
+  /^\/api\/plugin\/s\/.*\/config(\/|$)/,
+  // 喵喵帮助的写入类接口（配置、皮肤、备份）；图片与列表读取不拦
+  /^\/api\/plugin\/miao\/help\/?$/,
+  /^\/api\/plugin\/miao\/help\/preview\/?$/,
+  /^\/api\/plugin\/miao\/help\/theme\/config\/?$/,
+  /^\/api\/plugin\/miao\/help\/theme\/action(_put)?\/?$/,
+  /^\/api\/plugin\/miao\/help\/backup(\/|$)/,
   // 备份还原会覆盖代码和配置
   /^\/api\/backup(\/|$)/,
   // 配置写入能改主人、端口、密钥
   /^\/api\/config(\/|$)/,
+  // 系统：全盘目录树、建目录、重启锅巴
+  /^\/api\/sys(\/|$)/,
+  // 运行日志：读取、清空、清理策略与转发
+  /^\/api\/log(\/|$)/,
+  // 重启机器人
+  /^\/api\/bot(\/|$)/,
+  // 沙盒会走一遍插件链路；asset 是 <img> 直接引用，不拦
+  /^\/api\/sandbox\/(defaults|rules|match|send)\/?$/,
+  // 自定义页面的管理端；asset 由 iframe 直连，不拦
+  /^\/api\/custom-page\/store(\/|$)/,
+  /^\/api\/custom-page\/reload\/?$/,
 ]
 
 export default class AccessGateInterceptor extends Interceptor {

@@ -186,6 +186,35 @@ export class AccessGateService extends Service {
     }
   }
 
+  /** 二级密码被设置 / 修改 / 重置 / 关闭时私聊通知主人 */
+  #notifyCredentialChange(action, req) {
+    try {
+      const now = new Date()
+      const pad = (value) => String(value).padStart(2, '0')
+      const time = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
+        + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+      const lines = [
+        `[锅巴面板] 二级密码${action}。`,
+        `时间：${time}`,
+        `来源 IP：${getClientIp(req) || '未知'}`,
+      ]
+      const ua = req?.headers?.['user-agent']
+      if (typeof ua === 'string' && ua) {
+        lines.push(`设备：${ua.length > 160 ? ua.slice(0, 160) + '…' : ua}`)
+      }
+      const message = lines.join('\n')
+      const target = cfg.get('auth.securityMaster')
+      // 指定了安全通知接收人时只发给他，发送失败也不改发其他主人
+      Promise.resolve(target
+        ? sendToMasterUser(message, target)
+        : sendToOneMaster(message)).catch(() => {})
+    } catch (error) {
+      // 通知失败只记日志，不能影响密码本身已经改好的结果
+      logger.error('[Guoba] 二级密码变更通知发送失败')
+      logger.error(error)
+    }
+  }
+
   /** 失败一次；到第 3 次整个面板冻结 */
   async #recordFailure(req, ip) {
     const attempts = await redis.incr(this.attemptsKey(ip))
@@ -232,11 +261,13 @@ export class AccessGateService extends Service {
   /** 设置或修改二级密码，需要验证当前登录密码 */
   async setPassword(currentPassword, password, req) {
     if (!this.loginConfigured) throw new GuobaError('请先设置登录账号密码')
+    const wasConfigured = this.configured
     await this.loginSecurityService.verifyPasswordForSensitiveAction(req, currentPassword)
     if (!validatePassword(password)) throw new GuobaError('二级密码须为8至128位')
     if (verifyPassword(password, this.auth.passwordHash)) throw new GuobaError('二级密码不能与登录密码相同')
     cfg.set('auth.gatePasswordHash', hashPassword(password))
     await this.#clearAll()
+    this.#notifyCredentialChange(wasConfigured ? '已修改' : '已设置', req)
     // 设置完不给当前会话发解锁凭证：下一次进入敏感页面必须真正输入二级密码
     return { configured: true, unlocked: false, locked: false, lockSeconds: 0 }
   }
@@ -247,6 +278,7 @@ export class AccessGateService extends Service {
     await this.loginSecurityService.verifyPasswordForSensitiveAction(req, currentPassword)
     cfg.set('auth.gatePasswordHash', '')
     await this.#clearAll()
+    this.#notifyCredentialChange('已关闭', req)
     return { configured: false, unlocked: true, locked: false, lockSeconds: 0 }
   }
 
@@ -264,6 +296,7 @@ export class AccessGateService extends Service {
     if (verifyPassword(password, this.auth.passwordHash)) throw new GuobaError('二级密码不能与登录密码相同')
     cfg.set('auth.gatePasswordHash', hashPassword(password))
     await this.#clearAll()
+    this.#notifyCredentialChange('已通过登录密码重置', req)
     // 重置后同样不自动解锁，用新密码重新验证
     return { configured: true, unlocked: false, locked: false, lockSeconds: 0 }
   }

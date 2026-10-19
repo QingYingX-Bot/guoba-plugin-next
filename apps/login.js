@@ -124,13 +124,16 @@ export class GuobaLogin extends plugin {
     }
     let address = ''
     try {
-      address = await this.loginService.getWebAddress()
+      const web = await this.loginService.getWebAddress()
+      const pick = (list) => (Array.isArray(list) ? list : [])
+      address = [...pick(web?.remote), ...pick(web?.local), ...pick(web?.custom)]
+        .filter(Boolean)
+        .join('\n')
     } catch {
       // 拿不到地址不影响开关本身
     }
     return this.reply(address
-      ? `已开启外网访问：${address}
-用完发「#关闭锅巴外网」关掉。`
+      ? `已开启外网访问：\n${address}\n用完发「#关闭锅巴外网」关掉。`
       : '已开启外网访问。用完发「#关闭锅巴外网」关掉。')
   }
 
