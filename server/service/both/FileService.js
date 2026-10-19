@@ -194,14 +194,23 @@ export default class FileService extends Service {
    * 上传。multer 已把 multipart 文件落盘到临时目录，这里搬进目标目录；
    * 文件名清洗掉路径分隔符（防 ../ 覆盖根外文件），重名自动加后缀。
    */
-  async upload(rel = '', files = []) {
+  /**
+   * 上传文件到 `rel` 目录。
+   *
+   * `relPaths` 是「上传整个文件夹」时前端带过来的相对路径（如 `我的插件/sub/a.js`），
+   * 与 files 按下标一一对应。有它就在目标目录下按这些相对路径建子目录，
+   * 每条路径都会被逐段清洗并校验没有越出目标目录 —— 浏览器给的相对路径不可信。
+   */
+  async upload(rel = '', files = [], relPaths = []) {
     const dir = this.#resolve(rel)
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new GuobaError('目标目录不存在')
     this.#assertWritable(dir)
     const list = Array.isArray(files) ? files : [files]
     if (!list.length) throw new GuobaError('没有收到文件')
+    const relList = Array.isArray(relPaths) ? relPaths : []
     const saved = []
-    for (const f of list) {
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i]
       if (!f?.path || !f?.originalname) continue
       const size = Number(f.size ?? 0)
       if (size > MAX_UPLOAD_SIZE) {
@@ -213,10 +222,13 @@ export default class FileService extends Service {
         fs.rmSync(f.path, {force: true})
         throw new GuobaError('文件名不合法')
       }
+      // 上传文件夹时按相对路径落进对应子目录；单文件上传时 relPaths 为空，就是 dir 本身
+      const targetDir = this.#resolveUploadDir(dir, relList[i])
+      await fs.promises.mkdir(targetDir, {recursive: true})
       const ext = path.extname(safeName)
-      let target = path.join(dir, safeName)
+      let target = path.join(targetDir, safeName)
       if (fs.existsSync(target)) {
-        target = path.join(dir, `${path.basename(safeName, ext)}-${Date.now().toString(36)}${ext}`)
+        target = path.join(targetDir, `${path.basename(safeName, ext)}-${Date.now().toString(36)}${ext}`)
       }
       try {
         await fs.promises.rename(f.path, target)
@@ -225,9 +237,33 @@ export default class FileService extends Service {
         await fs.promises.copyFile(f.path, target)
         await fs.promises.unlink(f.path).catch(() => {})
       }
-      saved.push(path.basename(target))
+      saved.push(path.relative(dir, target).split(path.sep).join('/'))
     }
     return {ok: true, saved}
+  }
+
+  /**
+   * 把上传时的相对路径换算成目标目录（只取目录部分，文件名由 originalname 决定）。
+   * 逐段清洗，`..` / 绝对路径一律拒绝，最后再校验解析结果确实在 baseDir 里面。
+   */
+  #resolveUploadDir(baseDir, relPath) {
+    const raw = String(relPath ?? '').replace(/[\/]+/g, '/').trim()
+    if (!raw) return baseDir
+    const segments = raw.split('/').filter(Boolean)
+    // 最后一段是文件名，目录部分才是要建的
+    segments.pop()
+    const clean = []
+    for (const seg of segments) {
+      const name = this.#sanitizeName(seg)
+      if (!name || name === '.' || name === '..') throw new GuobaError('文件夹名不合法')
+      clean.push(name)
+    }
+    if (!clean.length) return baseDir
+    const abs = path.resolve(baseDir, ...clean)
+    if (abs !== baseDir && !abs.startsWith(baseDir + path.sep)) {
+      throw new GuobaError('上传路径越界')
+    }
+    return abs
   }
 
   /** 下载：返回根内绝对路径，由 controller 交给 res.download */

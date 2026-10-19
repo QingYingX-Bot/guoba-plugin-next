@@ -28,7 +28,7 @@ export function useHelper(guobaApp) {
   //    生效，未登录往 /guoba/任意路径 传文件也会先落到磁盘上（实测过：回 404，但文件已写出）。
   // 2) 必须带着有效的面板令牌。鉴权在路由层才做，中间件不等鉴权就落盘的话，
   //    没有令牌的人也能反复上传把磁盘灌满。
-  // 另外 limits 一定要给：单文件 500MB，最多 20 个文件。
+  // 另外 limits 一定要给：单文件 500MB，最多 200 个文件（上传整个文件夹时前端按 50 个一批发）。
   /** 剩余磁盘空间（字节）；拿不到就返回 null，按「放行」处理，别把正常上传卡死 */
   const freeDiskBytes = (dir) => {
     try {
@@ -49,9 +49,9 @@ export function useHelper(guobaApp) {
     dest: 'data/upload_tmp/',
     limits: {
       fileSize: 500 * 1024 * 1024,
-      files: 20,
+      files: 200,
       fields: 100,
-      parts: 140,
+      parts: 400,
     },
   })
   const mountRoot = cfg.serverMountPath.mountRoot

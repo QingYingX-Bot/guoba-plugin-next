@@ -73,8 +73,19 @@ export class FileController extends ApiController {
 
   /** 上传，multipart：path 字段 = 目标目录，文件在 req.files（multer 已处理） */
   async upload(req) {
-    const {path: rel} = req.body ?? {}
-    return Result.ok(await this.fileService.upload(rel, req.files))
+    const {path: rel, relPaths} = req.body ?? {}
+    // 上传整个文件夹时前端把每个文件的相对路径打包成 JSON 数组带过来
+    let list = []
+    if (Array.isArray(relPaths)) list = relPaths
+    else if (typeof relPaths === 'string' && relPaths) {
+      try {
+        const parsed = JSON.parse(relPaths)
+        if (Array.isArray(parsed)) list = parsed
+      } catch {
+        // 解析不了就当普通上传，不因为一个坏字段整单失败
+      }
+    }
+    return Result.ok(await this.fileService.upload(rel, req.files, list))
   }
 
   /** 下载 */
