@@ -1,5 +1,6 @@
 import { autowired, Interceptor, Result } from '#guoba.framework'
-import { _paths, Constant } from '#guoba.platform'
+import { Constant } from '#guoba.platform'
+import { normalizeAuthPath } from '../utils/authPath.js'
 
 /**
  * 二级密码拦截器。
@@ -55,14 +56,14 @@ export default class AccessGateInterceptor extends Interceptor {
     res.status(body.httpStatus).json(body.toJSON())
   }
 
-  /** 去掉自定义挂载前缀，得到 /api/... 开头的路径 */
+  /**
+   * 归一化到 /api/... 开头的小写路径。
+   *
+   * Express 路由不区分大小写，二级密码的判定也必须跟着不区分，
+   * 否则 /API/file/list 会绕过二级密码（已被实际利用过）。
+   */
   #relativePath(req) {
-    const { realMountPrefix } = _paths.server
-    let path = req.path || ''
-    if (realMountPrefix && path.startsWith(realMountPrefix)) {
-      path = path.substring(realMountPrefix.length)
-    }
-    return path
+    return normalizeAuthPath(req)
   }
 
   static priority = 200

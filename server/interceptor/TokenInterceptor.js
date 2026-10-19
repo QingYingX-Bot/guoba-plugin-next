@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken'
 import {autowired, Interceptor, Result} from "#guoba.framework";
-import {_paths, cfg, Constant} from "#guoba.platform";
+import {cfg, Constant} from "#guoba.platform";
+import {matchAuthPath} from "../utils/authPath.js";
 
 // 弱令牌（只能用来访问静态资源等）
 const liteInclude = [
@@ -132,12 +133,10 @@ export default class TokenInterceptor extends Interceptor {
    * @param {Request} req
    */
   check(reg, req) {
-    const {realMountPrefix} = _paths.server
-    let {path} = req
-    if (path.startsWith(realMountPrefix)) {
-      path = path.substring(realMountPrefix.length)
-    }
-    return reg.test(path)
+    // 路径统一归一化（小写 + 解码 + 剥挂载前缀）后再匹配。
+    // Express 的路由匹配不区分大小写，若这里按原样比较，/API/login/... 就能
+    // 绕过全部鉴权直接进 handler（已被实际利用过，务必保持归一化）。
+    return matchAuthPath(reg, req)
   }
 
   static priority = 100

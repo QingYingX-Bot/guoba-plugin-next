@@ -1,5 +1,6 @@
 import { autowired, Interceptor, Result } from '#guoba.framework'
-import { _paths, Constant } from '#guoba.platform'
+import { Constant } from '#guoba.platform'
+import { normalizeAuthPath } from '../utils/authPath.js'
 import { setPortFrozen } from '../utils/freezePortGuard.js'
 
 /**
@@ -52,12 +53,8 @@ export default class AccessFreezeInterceptor extends Interceptor {
   }
 
   #relativePath(req) {
-    const { realMountPrefix } = _paths.server
-    let path = req.path || ''
-    if (realMountPrefix && path.startsWith(realMountPrefix)) {
-      path = path.substring(realMountPrefix.length)
-    }
-    return path
+    // 与路由保持一致地不区分大小写，避免 /API/... 绕过冻结
+    return normalizeAuthPath(req)
   }
 
   static priority = 50
