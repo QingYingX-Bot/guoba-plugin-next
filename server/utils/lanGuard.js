@@ -1,4 +1,5 @@
 import os from 'node:os'
+import path from 'node:path'
 import {cfg} from '#guoba.platform'
 import {inCidr, getClientIp} from './clientIp.js'
 
@@ -90,6 +91,33 @@ const FORBIDDEN_PAGE = `<!doctype html>
 </div></body></html>`
 
 /**
+ * 归一化请求路径：去掉查询串、解码百分号转义、消解 . 与 ..、合并多余斜杠、转小写。
+ *
+ * Express 路由不区分大小写、按解码后的路径匹配；闸门如果拿原始 URL 做 startsWith，
+ * `/./guoba/...` 这类写法会绕过闸门却仍然命中锅巴路由。这里必须和路由看到同一个路径。
+ */
+function normalizeUrlPath(raw) {
+  let url = String(raw || '')
+  const cut = url.indexOf('?')
+  if (cut >= 0) url = url.slice(0, cut)
+  // 反斜杠在部分宿主里也会被当作分隔符，统一成 /
+  url = url.replace(/\\/g, '/')
+  try {
+    url = decodeURIComponent(url)
+  } catch {
+    // 解码失败就按原样判断，宁可多拦
+  }
+  url = path.posix.normalize(url).replace(/^\/{2,}/, '/')
+  if (!url.startsWith('/')) url = '/' + url
+  return url.toLowerCase()
+}
+
+function toPrefix(value) {
+  if (value === '/') return '/'
+  return normalizeUrlPath(value).replace(/\/+$/, '')
+}
+
+/**
  * 把闸门挂到锅巴的 app 上。
  *
  * 必须排在任何锅巴路由之前：只拦锅巴自己的路径（共享端口模式下宿主还有别的路由，
@@ -99,12 +127,16 @@ const FORBIDDEN_PAGE = `<!doctype html>
  * @param mounts 锅巴自己的挂载前缀列表（如 /guoba/、/guoba-plugin-mock-root）
  */
 export function installLanGuard(app, mounts) {
-  const prefixes = (Array.isArray(mounts) ? mounts : [mounts]).filter(Boolean)
+  const prefixes = (Array.isArray(mounts) ? mounts : [mounts])
+    .filter(Boolean)
+    .map(toPrefix)
   app.use((req, res, next) => {
     if (!isLanOnly()) return next()
-    const url = req.originalUrl || req.url || ''
+    const url = normalizeUrlPath(req.originalUrl || req.url || '')
     // '/' 表示锅巴独占整个站点，这时全部请求都归锅巴管
-    const owned = prefixes.some(prefix => prefix === '/' || url.startsWith(prefix))
+    const owned = prefixes.some(prefix => prefix === '/'
+      || url === prefix
+      || url.startsWith(prefix + '/'))
     if (!owned) return next()
     if (isLanRequest(req)) return next()
     res.status(403).type('html').send(FORBIDDEN_PAGE)
