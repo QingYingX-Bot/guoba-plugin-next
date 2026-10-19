@@ -44,6 +44,8 @@ export function useHelper(guobaApp) {
   }
   /** 上传前至少留这么多空闲：低于它就拒绝，磁盘写满整个 Bot 会跟着崩 */
   const MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024
+  /** 单次上传请求的总量上限（4GB）：面板上传的是配置和插件，不是搬系统镜像 */
+  const MAX_UPLOAD_REQUEST_BYTES = 4 * 1024 * 1024 * 1024
 
   const upload = multer({
     dest: 'data/upload_tmp/',
@@ -100,6 +102,13 @@ export function useHelper(guobaApp) {
     const free = freeDiskBytes('.')
     if (free !== null && free < MIN_FREE_BYTES) {
       res.status(507).json({ok: false, code: 507, message: '服务器磁盘空间不足，已拒绝上传', result: null})
+      return
+    }
+    // 单请求总量也要卡住：20 个 500MB 的文件就是 10GB，一个请求就能把盘写满。
+    // Content-Length 是请求头里最直接的信号；分块上传（没有这个头）时仍由单文件上限兜底。
+    const declared = Number(req.headers['content-length'] ?? 0)
+    if (Number.isFinite(declared) && declared > MAX_UPLOAD_REQUEST_BYTES) {
+      res.status(413).json({ok: false, code: 413, message: '单次上传总量过大，请分批上传', result: null})
       return
     }
     upload.any()(req, res, next)
