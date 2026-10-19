@@ -68,6 +68,29 @@ export const FROZEN_CODE = 4230
 /** localStorage 中保存主题的键 */
 export const THEME_STORAGE_KEY = 'guoba:theme'
 
+/** localStorage 中「首页不再提示设置二级密码」的键 */
+export const GATE_TIP_MUTED_KEY = 'guoba:gate-tip-muted'
+
+/** 首页是否已经永久关掉了「尚未设置二级密码」的提示 */
+export function isGateTipMuted(): boolean {
+  try {
+    return localStorage.getItem(GATE_TIP_MUTED_KEY) === '1'
+  } catch {
+    // 隐私模式下 localStorage 不可用，一律当成没关掉
+    return false
+  }
+}
+
+/** 永久关掉 / 重新打开首页的「尚未设置二级密码」提示 */
+export function setGateTipMuted(muted: boolean): void {
+  try {
+    if (muted) localStorage.setItem(GATE_TIP_MUTED_KEY, '1')
+    else localStorage.removeItem(GATE_TIP_MUTED_KEY)
+  } catch {
+    // 写不进去就只是下次还会提示，不影响其他功能
+  }
+}
+
 /**
  * 服务端注入的外观主题（config/application.yaml 的 theme 段）
  */

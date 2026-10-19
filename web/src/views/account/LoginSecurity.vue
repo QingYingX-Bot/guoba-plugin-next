@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Select, Table, Tag, Tooltip, message } from 'ant-design-vue'
+import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Select, Switch, Table, Tag, Tooltip, message } from 'ant-design-vue'
 import {
   apiClearGatePassword,
   apiClearTrustedDevices,
@@ -18,7 +18,7 @@ import {
 } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useGateStore } from '@/stores/gate'
-import { CREDENTIALS_RESET_CODE } from '@/utils/env'
+import { CREDENTIALS_RESET_CODE, isGateTipMuted, setGateTipMuted } from '@/utils/env'
 import {
   clearDeviceSecret,
   getDeviceId,
@@ -43,6 +43,11 @@ const form = reactive({ username: '', currentPassword: '', password: '', confirm
 const gateConfigured = ref(false)
 const gateSaving = ref(false)
 const gateForm = reactive({ currentPassword: '', password: '', confirmPassword: '' })
+/** 首页是否还提示「尚未设置二级密码」 */
+const gateTipOn = ref(!isGateTipMuted())
+
+// 开关只改浏览器本地记录，不需要密码，也不影响面板的其他校验
+watch(gateTipOn, (on) => setGateTipMuted(!on))
 
 /** 安全通知接收人：冻结/重置通知、验证码、解冻指令都只认他 */
 const masters = ref<MasterUser[]>([])
@@ -352,6 +357,11 @@ onMounted(load)
           </Popconfirm>
         </div>
       </Form>
+      <div class="g-sec-tip-row">
+        <Switch v-model:checked="gateTipOn" size="small" />
+        <span class="g-sec-tip-label">首页提示</span>
+        <span class="g-sec-dim">关闭后首页不再提示设置二级密码</span>
+      </div>
     </Card>
 
     <Card :bordered="false" class="g-sec-notify">
@@ -525,6 +535,22 @@ onMounted(load)
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+/* 二级密码卡片底部的首页提示开关 */
+.g-sec-tip-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--g-border);
+  font-size: 12px;
+}
+
+.g-sec-tip-label {
+  color: var(--g-text);
 }
 
 .g-sec-devs {
