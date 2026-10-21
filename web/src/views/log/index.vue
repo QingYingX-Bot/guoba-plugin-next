@@ -41,12 +41,20 @@ const INTERVAL = 1000
 /** 页面上最多留多少行，超了从头砍，浏览器渲染吃不住太多 DOM */
 const MAX_KEEP = 3000
 
+/*
+ * 取值范围跟宿主「日志等级」配置一致（trace / debug / info / warn / error / fatal / mark / off），
+ * 避免面板里能配的级别在运行日志里筛不了。
+ */
 const LEVELS = [
   { value: 'all', label: '全部' },
+  { value: 'trace', label: 'Trace 以上' },
   { value: 'debug', label: 'Debug 以上' },
   { value: 'info', label: 'Info 以上' },
   { value: 'warn', label: 'Warn 以上' },
-  { value: 'error', label: '只看错误' },
+  { value: 'error', label: 'Error 以上' },
+  { value: 'fatal', label: 'Fatal 以上' },
+  { value: 'mark', label: 'Mark 以上' },
+  { value: 'off', label: '不显示（Off）' },
 ]
 
 const lines = ref<LogLine[]>([])
