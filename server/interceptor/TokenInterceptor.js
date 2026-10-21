@@ -19,6 +19,8 @@ const include = [
 // 允许把 token 放在 query 里的路径：只能写进 <a href> / <img src> / <script src> 的接口。
 // 其余接口一律走 header —— token 进了 URL 就会进日志、Referer、浏览器历史和截图。
 const queryTokenAllow = [
+  // 背景图由 <img src> 直接请求，带不上请求头；只读一张图，token 放 query 可接受
+  new RegExp('^/api/theme/background/image$'),
   new RegExp('^/api/file/download$'),
   new RegExp('^/api/file/download-dir$'),
   new RegExp('^/api/custom-page/asset/[^/]+/[^/]+$'),

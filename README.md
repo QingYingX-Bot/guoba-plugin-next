@@ -94,9 +94,9 @@ TRSS 系宿主会自动共享宿主的 HTTP 端口，挂在 `/guoba` 路径下�
 
 面板自带几条默认收紧的策略，都在 `config/application.yaml` 里可调：
 
-- **文件管理只能写入 `data` / `logs` / `temp`**，其余目录（含 `plugins`、`config`）只读。
+- **文件管理默认只能写入 `data` / `logs` / `temp`**，其余目录（含 `plugins`、`config`）只读。
   往插件目录写文件等于执行代码，所以默认不开放；确实要在面板里改代码，再把目录加进
-  `security.fileWriteScopes`（加了 `plugins` 就等于把提权通道重新打开）。
+  `security.fileWriteScopes`（加了 `plugins` 就等于把提权通道重新打开；填 `*` 则是整个云崽目录都可写）。
 - **网页终端默认关闭**（`security.enableTerminal: false`），它等同服务器 shell。
 - 装插件、改插件配置、备份还原、改面板配置都要先过二级密码。
 - 登录密码连错 3 次直接冻结面板并断开对外端口，只有主人能在聊天里发「#锅巴解冻」解除；
