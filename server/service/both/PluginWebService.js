@@ -71,14 +71,14 @@ export default class PluginWebService extends Service {
         }
         if (pages.length) {
           pages.sort((a, b) => a.priority - b.priority)
-          this.pages.set(dirName.toLowerCase(), pages)
+          this.pages.set(dirName.toLowerCase(), { dirName, pages })
         }
       } catch (e) {
         logger.warn(`[Guoba] 读取「${dirName}」的 web/pages.json 失败：`, e.message || e)
       }
     }
     if (this.pages.size) {
-      const summary = [...this.pages].map(([k, v]) => `${k}(${v.length})`).join(', ')
+      const summary = [...this.pages].map(([k, v]) => `${v.dirName}(${v.pages.length})`).join(', ')
       logger.mark(`[Guoba] 插件页面：${summary}`)
     }
   }
@@ -90,7 +90,12 @@ export default class PluginWebService extends Service {
   }
 
   getPages (name) {
-    return this.pages.get(String(name ?? '').toLowerCase()) || []
+    return (this.pages.get(String(name ?? '').toLowerCase()) || {}).pages || []
+  }
+
+  /** 插件真实目录名（保留大小写），API owner 拼路径用 */
+  getDirName (name) {
+    return this.#dirOf(String(name ?? '').toLowerCase())
   }
 
   hasPages (name) {

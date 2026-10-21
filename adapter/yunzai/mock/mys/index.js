@@ -64,6 +64,8 @@ function query (dbPath, sql, params = []) {
   return new Promise((resolve, reject) => {
     const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
       if (err) return reject(err)
+      // 宿主在写库（自动签到等任务）时让读等待而不是立即报 SQLITE_BUSY
+      db.configure("busyTimeout", 2000)
       db.all(sql, params, (e, rows) => {
         db.close(() => {})
         if (e) return reject(e)

@@ -56,6 +56,8 @@ async function load () {
     const plugin = String(route.params.name ?? '')
     const pageId = String(route.params.pageId ?? '')
     const page = await findEntry(plugin, pageId)
+  // API owner 用插件的真实目录名（大小写敏感），页面里 fetch /custom/<dirName>/*
+  const dirName = (page as any).dirName || plugin
     if (!page) {
       error.value = `未找到页面：${plugin} / ${pageId}`
       return
@@ -68,9 +70,9 @@ async function load () {
     // 注入插件页面运行时上下文（与 custom-page 的 __GUOBA__ 对齐）
     ;(window as any).__GUOBA__ = {
       pageId: page.id,
-      plugin,
+      plugin: dirName,
       webBase: REAL_MOUNT_PREFIX,
-      apiBase: `${API_BASE}/custom/${encodeURIComponent(plugin)}`,
+      apiBase: `${API_BASE}/custom/${dirName}`,
       token,
       tokenKey: TOKEN_KEY,
     }

@@ -28,9 +28,10 @@ export class PluginPagesController extends ApiController {
   async getList () {
     await this.pluginWebService.loading
     const out = []
-    for (const [plugin, pages] of this.pluginWebService.pages) {
+    for (const [plugin, { dirName, pages }] of this.pluginWebService.pages) {
       out.push({
         plugin,
+        dirName,
         pages: pages.map(({ entry, ...rest }) => ({ ...rest, component: entry })),
       })
     }
