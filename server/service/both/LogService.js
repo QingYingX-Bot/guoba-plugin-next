@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import {Service, GuobaError} from '#guoba.framework'
+import {hostName} from '#guoba.adapter'
 import {_paths, cfg} from '#guoba.platform'
 import {
   formatLogText,
@@ -93,6 +94,18 @@ const LEVELS = {
   FATA: 'fatal',
   MARK: 'mark',
 }
+
+/**
+ * 级别从低到高的顺序，跟着宿主的日志实现走。
+ *
+ * - log4js（Miao / TRSS）：mark 是最高级（云崽用它打启动信息），任何非 Off 的筛选都含它。
+ * - JiuLi：`lib/core/log.js` 的 LEVEL_RANK 是
+ *   trace < debug < info < mark < warn < error < fatal < off，mark 夹在 info 和 warn 之间。
+ *   按 log4js 的顺序筛，JiuLi 的 mark 会被当成最高级 ——「只看错误」混进 mark、选 mark 又不筛。
+ */
+const LEVEL_ORDER_LOG4JS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'mark']
+const LEVEL_ORDER_JIULI = ['trace', 'debug', 'info', 'mark', 'warn', 'error', 'fatal']
+const LEVEL_ORDER = hostName === 'jiuli' ? LEVEL_ORDER_JIULI : LEVEL_ORDER_LOG4JS
 
 /**
  * 试着从句首抠出「时间 + 级别」。
@@ -275,7 +288,8 @@ export default class LogService extends Service {
 
   /** 解析一行并入缓冲 */
   #push(key, raw) {
-    const line = String(raw).replace(/\r/g, '')
+    // Windows 上的日志文件可能是 CRLF、个别工具还会写 BOM，统一去掉再解析
+    const line = String(raw).replace(/^\uFEFF/, '').replace(/\r/g, '')
     let text = line.replace(ANSI_RE, '')
     // 全是空白的行没有信息量，刷屏时还挺占地方
     if (!text.trim()) return
@@ -323,17 +337,21 @@ export default class LogService extends Service {
   #preload() {
     const file = this.#preloadFile()
     if (!file) return
-    const {size} = fs.statSync(file)
-    const start = Math.max(0, size - PRELOAD_BYTES)
-    const fd = fs.openSync(file, 'r')
+    let fd
     let text
     try {
+      const {size} = fs.statSync(file)
+      const start = Math.max(0, size - PRELOAD_BYTES)
       const len = size - start
       const buf = Buffer.allocUnsafe(len)
+      fd = fs.openSync(file, 'r')
       fs.readSync(fd, buf, 0, len, start)
       text = buf.toString('utf8')
     } finally {
-      fs.closeSync(fd)
+      // 日志文件在 stat / open 之间被轮转时（Windows 上 pm2 更常见）按没有历史日志处理
+      if (fd != null) {
+        try { fs.closeSync(fd) } catch {}
+      }
     }
     const lines = text.split('\n')
     // 从中间截的，第一行多半是半截的，丢掉
@@ -346,9 +364,12 @@ export default class LogService extends Service {
   /** 预读用哪个文件 */
   #preloadFile() {
     const candidates = [
-      // pm2 注入的 stdout 日志路径，全量
+      // pm2 注入的 stdout / stderr 日志路径，全量；Windows 和 Linux 都认这两个变量
       process.env.pm_out_log_path,
-      // log4js 的 dateFile，当天那份没压缩
+      process.env.pm_err_log_path,
+      // JiuLi 的全量日志：mark / warn 才写 command，info 及以下只在 jiuli.* 里
+      path.join(_paths.root, 'logs', `jiuli.${today()}.log`),
+      // log4js 的 dateFile，当天那份没压缩（只有 warn 以上）
       path.join(_paths.root, 'logs', `command.${today()}.log`),
     ]
     for (const file of candidates) {
@@ -402,17 +423,17 @@ export default class LogService extends Service {
   }
 
   /**
-   * 级别筛选：按 log4js 的严重程度取「该级别及以上」，跟日志本身的 level 语义一致。
-   * 传空或 all 表示不筛。
+   * 级别筛选：按当前宿主的严重程度取「该级别及以上」，跟日志本身的 level 语义一致。
+   * 传空或 all 表示不筛，off 表示不显示任何日志。
    */
   #levelFilter(level) {
-    const order = ['trace', 'debug', 'info', 'warn', 'error', 'fatal']
     const key = String(level ?? '').trim().toLowerCase()
     if (!key || key === 'all') return null
-    const idx = order.indexOf(key)
+    // Off 在 log4js / JiuLi 里都是「关掉日志」，筛选它时就该什么都不显示
+    if (key === 'off') return new Set()
+    const idx = LEVEL_ORDER.indexOf(key)
     if (idx < 0) return null
-    // mark 是 log4js 里最高的级别，云崽用它打启动信息，任何筛选下都该留着
-    return new Set([...order.slice(idx), 'mark'])
+    return new Set(LEVEL_ORDER.slice(idx))
   }
 
   /** 清空缓冲。只清面板这边的显示，磁盘上的日志文件不动 */
