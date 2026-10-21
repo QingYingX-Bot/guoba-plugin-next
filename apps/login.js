@@ -1,5 +1,5 @@
 import { autowired } from '#guoba.framework'
-import { makeForwardMsg } from '#guoba.utils'
+import { makeForwardMsg, sendToMasterUser, sendToOneMaster } from '#guoba.utils'
 import { cfg, Constant } from '#guoba.platform'
 
 export class GuobaLogin extends plugin {
@@ -110,6 +110,9 @@ export class GuobaLogin extends plugin {
    *
    * 默认关着：面板只认局域网（同网段）来的请求。开的时候是把配置里的 lanOnly 关掉，
    * 立刻生效，不用重启。
+   *
+   * 开启后的地址里带着公网 IP，群聊里只回结果，地址一律私聊发给指定主人
+   * （auth.securityMaster，没配置就发给触发指令的主人本人）。
    */
   async toggleWan () {
     if (!this.e.isMaster) return false
@@ -132,9 +135,27 @@ export class GuobaLogin extends plugin {
     } catch {
       // 拿不到地址不影响开关本身
     }
-    return this.reply(address
+    const message = address
       ? `已开启外网访问：\n${address}\n用完发「#关闭锅巴外网」关掉。`
-      : '已开启外网访问。用完发「#关闭锅巴外网」关掉。')
+      : '已开启外网访问。用完发「#关闭锅巴外网」关掉。'
+
+    if (!this.e.isGroup) {
+      return this.reply(message)
+    }
+    // 群聊里绝不回地址：优先发给指定的安全通知接收人，没指定就发给触发者本人，失败也不改发群里
+    const target = cfg.get('auth.securityMaster')
+    let sent = 0
+    try {
+      sent = target
+        ? await sendToMasterUser(message, target)
+        : await sendToOneMaster(message, { userId: this.e.user_id })
+    } catch (err) {
+      logger.error('[Guoba] 外网地址私聊发送失败')
+      logger.error(err)
+    }
+    return this.reply(sent > 0
+      ? '已开启外网访问，面板地址已私聊发送给主人~'
+      : '已开启外网访问，但地址私聊发送失败，请主人私聊发送「#开启锅巴外网」获取。')
   }
 
   async login () {
