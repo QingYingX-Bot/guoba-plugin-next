@@ -25,6 +25,13 @@ const queryTokenAllow = [
   new RegExp('^/api/custom-page/asset/[^/]+/[^/]+$'),
   new RegExp('^/api/sandbox/asset/[^/]+$'),
   new RegExp('^/api/helper/transit$'),
+  // ↓ Mys-plugin 扩展页面（本地 fork）：这些地址只能由浏览器直接发起，带不上请求头
+  // 扩展页入口是动态 import()，_shared.js 还会把 ?token= 原样继承过去
+  new RegExp('^/api/plugin-pages/asset/[^/]+/.+$'),
+  // 面板图/头像：<img src>，路径 /api/custom/Mys-plugin/panel/{avatar,image,preview}
+  new RegExp('^/api/custom/[^/]+/panel/(avatar|image|preview)$'),
+  // 本地数据下载：window.open()，路径 /api/custom/Mys-plugin/local/download
+  new RegExp('^/api/custom/[^/]+/local/download$'),
 ]
 
 // 不需要拦截的路径
