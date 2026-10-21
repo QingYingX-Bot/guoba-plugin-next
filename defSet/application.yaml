@@ -62,6 +62,7 @@ auth:
 security:
   # 面板文件管理允许写入的目录（相对 Yunzai 根），其余目录只读。
   # 往 plugins/ 写文件等于执行代码，所以默认不开放；确实要在面板里改代码再自己加。
+  # 填 '*' 表示整个 Yunzai 目录都可写（含 plugins / config），仅在完全信任面板使用者时用。
   fileWriteScopes:
     - data
     - logs

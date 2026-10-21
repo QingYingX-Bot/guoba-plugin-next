@@ -11,6 +11,8 @@ const MAX_TEXT_SIZE = 2 * 1024 * 1024
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024
 /** 读文件前多少字节嗅探二进制（含 \0 就按二进制处理） */
 const BINARY_SNIFF = 4096
+/** 面板默认允许写入的根内目录；配置里填 '*' 表示整个云崽目录都可写 */
+const DEFAULT_WRITE_SCOPES = ['data', 'logs', 'temp']
 
 /**
  * 文件管理。
@@ -60,7 +62,7 @@ export default class FileService extends Service {
     return [...parts, name].join('/')
   }
 
-  /** 面板允许写入的根内目录（可配置），默认只有 data / logs / temp */
+  /** 面板允许写入的根内目录（可配置），默认只有 data / logs / temp；'*' 表示全部 */
   #writeScopes() {
     const configured = cfg.get('security.fileWriteScopes')
     const list = Array.isArray(configured) ? configured : DEFAULT_WRITE_SCOPES
@@ -94,8 +96,10 @@ export default class FileService extends Service {
     this.#assertRealWithinRoot(abs)
     const rel = path.relative(this.root, abs)
     if (!rel) throw new GuobaError('不能直接修改根目录')
-    const top = rel.split(path.sep)[0]
     const scopes = this.#writeScopes()
+    // '*' = 整个云崽目录都可写；根外路径和符号链接仍由 #assertRealWithinRoot 拦住
+    if (scopes.includes('*')) return
+    const top = rel.split(path.sep)[0]
     if (!scopes.includes(top)) {
       throw new GuobaError(`为安全起见，面板只允许写入 ${scopes.join(' / ')} 目录`)
     }
