@@ -30,6 +30,8 @@ const queryTokenAllow = [
   new RegExp('^/api/plugin-pages/asset/[^/]+/.+$'),
   // 面板图/头像：<img src>，路径 /api/custom/Mys-plugin/panel/{avatar,image,preview}
   new RegExp('^/api/custom/[^/]+/panel/(avatar|image|preview)$'),
+  // 米游社账号头像：<img src>，服务端 302 到米游社 CDN
+  new RegExp('^/api/custom/[^/]+/accounts/avatar$'),
   // 本地数据下载：window.open()，路径 /api/custom/Mys-plugin/local/download
   new RegExp('^/api/custom/[^/]+/local/download$'),
 ]
