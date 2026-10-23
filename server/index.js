@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs";
+import {spawn} from "node:child_process";
 import {GuobaApplication} from "#guoba.framework";
 import {_paths, cfg, GuobaSupportMap, PluginsMap} from '#guoba.platform';
 import {hostName, isTRSS, isV3, isV4} from '#guoba.adapter'
@@ -10,6 +11,9 @@ import {installLanGuard} from './utils/lanGuard.js'
 
 const {mountRoot, mountRootWithSlash} = cfg.serverMountPath
 const realRoot = _paths.server.realMountPrefix + '/'
+
+// 自动构建只触发一次：createServer 可能因重载被多次调用
+let autoBuildStarted = false
 
 export async function createServer({isInit}) {
   const begin = Date.now()
@@ -65,12 +69,53 @@ export async function createServer({isInit}) {
     delete Guoba.parentApp
   }
 
-  // WebUI 构建产物（server/static/）被 .gitignore 排除，全新部署默认没有 index.html。
-  // 启动时检查一次并给出确切命令，比让每个首页请求抛 ENOENT 友好得多。
+  // WebUI 构建产物（server/static/）已入库，正常 clone 下来就有 index.html。
+  // 兜底：万一缺失（从旧版本升级、手工删过、或同步上游时被覆盖），后台自动补构建一次。
   const webIndex = path.join(_paths.staticPath, "index.html")
-  if (!fs.existsSync(webIndex)) {
-    logger.warn("[Guoba] WebUI 未构建：" + webIndex + " 不存在")
-    logger.warn('[Guoba] 请执行：cd "' + _paths.pluginRoot + '" && npm run build')
+  if (!fs.existsSync(webIndex) && !autoBuildStarted) {
+    autoBuildStarted = true
+    const builder = path.join(_paths.pluginRoot, "scripts/build-web.mjs")
+    if (!fs.existsSync(builder)) {
+      logger.warn("[Guoba] WebUI 未构建，且找不到构建脚本：" + builder)
+      logger.warn('[Guoba] 请手动执行：cd "' + _paths.pluginRoot + '" && npm run build')
+    } else {
+      logger.warn("[Guoba] WebUI 未构建，正在后台自动构建（首次需装依赖，约 1-2 分钟）")
+      logger.warn("[Guoba] 构建期间面板会 404，完成后刷新即可，无需重启")
+      const child = spawn(process.execPath, [builder], {
+        cwd: _paths.pluginRoot,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {...process.env, GUOBA_AUTO_BUILD: "1"}
+      })
+      const tail = []
+      const consume = (stream) => {
+        let buf = ""
+        stream.on("data", chunk => {
+          buf += String(chunk)
+          const lines = buf.split("\n")
+          buf = lines.pop()
+          for (const raw of lines) {
+            const line = raw.trimEnd()
+            if (!line.trim()) continue
+            tail.push(line)
+            if (tail.length > 40) tail.shift()
+            // 只把构建脚本自己的进度打到日志，npm 的噪声留在 tail 里等失败时再吐
+            if (line.indexOf("[Guoba]") >= 0) logger.info("[Guoba][build] " + line.trim())
+          }
+        })
+      }
+      consume(child.stdout)
+      consume(child.stderr)
+      child.on("error", err => logger.error("[Guoba] 自动构建启动失败：" + err.message))
+      child.on("exit", code => {
+        if (code === 0) {
+          logger.mark("[Guoba] WebUI 构建完成，刷新面板即可")
+        } else {
+          logger.error("[Guoba] WebUI 自动构建失败（exit " + code + "），最近输出：")
+          for (const line of tail.slice(-15)) logger.error("[Guoba][build] " + line)
+          logger.error('[Guoba] 请手动执行：cd "' + _paths.pluginRoot + '" && npm run build')
+        }
+      })
+    }
   }
 
   // 启动服务

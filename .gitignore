@@ -128,6 +128,12 @@ dist
 *.spec.js
 *.spec.mjs
 
-# 锅巴 WebUI 构建产物（vite build 输出），不入库：
-# 部署后需要 `cd web && node node_modules/vite/bin/vite.js build` 生成
-server/static/
+# 锅巴 WebUI 构建产物（vite build 输出）—— 入库
+#
+# 这是分发给用户的插件，不该让用户为了打开面板去装 200MB 前端依赖再等 1 分钟构建。
+# 构建是确定性的（同样源码 → 同样文件名哈希），重复构建不产生新 blob，不会撑大仓库。
+# 体积约 2.9MB / 76 个文件。
+#
+# ⚠️ 改了 web/ 源码之后必须重新构建并把 server/static/ 一起提交：
+#     npm run build && git add server/static
+# 万一忘了提交，启动时 server/index.js 会在后台自动补构建（约 1 分钟）。

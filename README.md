@@ -90,16 +90,30 @@ TRSS 系宿主会自动共享宿主的 HTTP 端口，挂在 `/guoba` 路径下�
 
 前端在 `web/`，`pnpm dev` 起开发服务器，`pnpm build` 产物输出到 `server/static/`。
 
-## 首次部署（必须构建前端）
+## 前端构建产物
 
-`server/static/` 是 vite 构建产物，**不入库**。全新 clone 后如果不构建，打开面板会 404，
-日志里能看到 `ENOENT ... server/static/index.html`。在插件根目录执行：
+`server/static/` 是 vite 构建产物，**已入库** —— clone 下来直接能用，不需要装前端依赖。
+体积约 2.9MB / 76 个文件；构建是确定性的（同样源码 → 同样文件名哈希），重复构建不会产生新 blob。
+
+改了 `web/` 源码之后必须重新构建并一起提交：
 
 ```bash
 npm run build
+git add server/static
 ```
 
-脚本会先检查 `web/node_modules`（缺了自动 `npm install`），再构建并校验产物。
+`npm run build` 会先检查 `web/node_modules`（缺了自动 `npm install`），再构建并校验产物。
+
+**同步上游之后**：`server/static/` 是构建产物，出现冲突不要去手工合并，一律「以本地为准 + 重建」：
+
+```bash
+git checkout --ours server/static   # 冲突时取本地版本
+npm run build                       # 用当前 web/ 源码重建
+git add server/static
+```
+
+如果 `server/static/` 缺失（从旧版本升级、或手工删过），启动时会**在后台自动构建**：
+约 1 分钟，期间面板 404，完成后刷新即可，不需要重启机器人。
 
 # 安全加固
 
