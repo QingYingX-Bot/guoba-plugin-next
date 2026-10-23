@@ -90,6 +90,17 @@ TRSS 系宿主会自动共享宿主的 HTTP 端口，挂在 `/guoba` 路径下�
 
 前端在 `web/`，`pnpm dev` 起开发服务器，`pnpm build` 产物输出到 `server/static/`。
 
+## 首次部署（必须构建前端）
+
+`server/static/` 是 vite 构建产物，**不入库**。全新 clone 后如果不构建，打开面板会 404，
+日志里能看到 `ENOENT ... server/static/index.html`。在插件根目录执行：
+
+```bash
+npm run build
+```
+
+脚本会先检查 `web/node_modules`（缺了自动 `npm install`），再构建并校验产物。
+
 # 安全加固
 
 面板自带几条默认收紧的策略，都在 `config/application.yaml` 里可调：

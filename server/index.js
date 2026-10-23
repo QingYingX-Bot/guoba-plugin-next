@@ -1,4 +1,5 @@
 import path from "path";
+import fs from "fs";
 import {GuobaApplication} from "#guoba.framework";
 import {_paths, cfg, GuobaSupportMap, PluginsMap} from '#guoba.platform';
 import {hostName, isTRSS, isV3, isV4} from '#guoba.adapter'
@@ -62,6 +63,14 @@ export async function createServer({isInit}) {
     } catch { /* ignore */ }
   } else {
     delete Guoba.parentApp
+  }
+
+  // WebUI 构建产物（server/static/）被 .gitignore 排除，全新部署默认没有 index.html。
+  // 启动时检查一次并给出确切命令，比让每个首页请求抛 ENOENT 友好得多。
+  const webIndex = path.join(_paths.staticPath, "index.html")
+  if (!fs.existsSync(webIndex)) {
+    logger.warn("[Guoba] WebUI 未构建：" + webIndex + " 不存在")
+    logger.warn('[Guoba] 请执行：cd "' + _paths.pluginRoot + '" && npm run build')
   }
 
   // 启动服务

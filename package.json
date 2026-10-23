@@ -5,7 +5,9 @@
   "type": "module",
   "module": "index.js",
   "main": "index.js",
-  "scripts": {},
+  "scripts": {
+    "build": "node scripts/build-web.mjs"
+  },
   "imports": {
     "#guoba.platform": "./models/platform.js",
     "#guoba.utils": "./models/utils.js",
