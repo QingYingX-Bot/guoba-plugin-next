@@ -1,6 +1,7 @@
 import os from 'os'
 import fs from 'fs'
 import path from 'path'
+import crypto from 'node:crypto'
 import moment from 'moment'
 import lodash from 'lodash'
 import fetch from 'node-fetch'
@@ -12,16 +13,18 @@ import {isFakeAccount} from './account.js'
 export {isFakeAccount}
 
 /**
- * 随机生成指定长度的字符串
- * @param length
- * @return {string}
+ * 随机生成指定长度的字符串。
+ *
+ * 用在登录验证码、一次性登录码、JWT secret 这些地方，必须是密码学安全的随机源；
+ * 字符集保持 [0-9a-z]，验证码要手输/复制，别引入看着像乱码的符号。
  */
 export function randomString(length = 8) {
+  const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
   let str = ''
   for (let i = 0; i < length; i++) {
-    str += lodash.random(36).toString(36)
+    str += alphabet[crypto.randomInt(alphabet.length)]
   }
-  return str.substr(0, length)
+  return str
 }
 
 export function toPairsMap(arg) {
