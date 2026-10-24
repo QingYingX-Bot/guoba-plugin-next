@@ -112,8 +112,15 @@ export class LoginSecurityService extends Service {
     try {
       const dir = path.join(_paths.data, 'guoba')
       fs.mkdirSync(dir, { recursive: true })
+      const file = path.join(dir, 'security-audit.log')
       const line = JSON.stringify({ time: this.#nowText(), event, ...detail })
-      fs.appendFileSync(path.join(dir, 'security-audit.log'), line + '\n')
+      fs.appendFileSync(file, line + '\n')
+      // 审计日志里有 IP、设备信息，只给属主读
+      try {
+        fs.chmodSync(file, 0o600)
+      } catch {
+        // Windows 上权限位语义不同，失败不影响记录
+      }
     } catch (error) {
       logger.error('[Guoba] 安全审计日志写入失败')
       logger.error(error)
