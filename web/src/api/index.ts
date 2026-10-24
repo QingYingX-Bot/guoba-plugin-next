@@ -1651,9 +1651,10 @@ export const apiBackupSettings = () => get<BackupSettings>('/backup/settings')
 export const apiBackupSaveSettings = (body: BackupSettings) =>
   post<BackupSettings>('/backup/settings', body)
 
-/** 下载地址，token 走 query 才能直接写进 <a href> */
-export function backupDownloadUrl(file: string, token: string) {
+/** 下载地址，token 和二级密码凭证都走 query 才能直接写进 <a href> */
+export function backupDownloadUrl(file: string, token: string, gateToken?: string) {
   const q = new URLSearchParams({ file, token })
+  if (gateToken) q.set('gateToken', gateToken)
   return `${API_BASE}/backup/download?${q.toString()}`
 }
 

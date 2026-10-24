@@ -14,12 +14,14 @@ import {
 } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import { useGateStore } from '@/stores/gate'
 import { formatBytes } from '@/utils/format'
 
 const emit = defineEmits<{ restore: [string] }>()
 
 const appStore = useAppStore()
 const auth = useAuthStore()
+const gate = useGateStore()
 /** 手机上五列表格挤不下，包名会被压成一列竖排的字 —— 换成卡片 */
 const isMobile = computed(() => appStore.isMobile)
 const list = ref<BackupFile[]>([])
@@ -137,7 +139,7 @@ onMounted(load)
             {{ formatBytes(f.size) }} · {{ fmtTime(f.mtime) }}
           </div>
           <div class="g-bk-card-ops">
-            <a class="g-bk-op" :href="backupDownloadUrl(f.name, auth.token)">
+            <a class="g-bk-op" :href="backupDownloadUrl(f.name, auth.token, gate.gateToken)">
               <GIcon icon="ant-design:cloud-download-outlined" :size="13" />
               下载
             </a>
@@ -186,7 +188,7 @@ onMounted(load)
         <template v-else-if="column.key === 'mtime'">{{ fmtTime(record.mtime) }}</template>
 
         <template v-else-if="column.key === 'op'">
-          <a class="g-bk-op" :href="backupDownloadUrl(record.name, auth.token)">
+          <a class="g-bk-op" :href="backupDownloadUrl(record.name, auth.token, gate.gateToken)">
             <GIcon icon="ant-design:cloud-download-outlined" :size="13" />
             下载
           </a>

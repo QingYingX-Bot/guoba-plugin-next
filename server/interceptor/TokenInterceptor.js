@@ -30,6 +30,12 @@ const queryTokenAllow = [
   new RegExp('^/api/file/download-dir$'),
   new RegExp('^/api/custom-page/asset/[^/]+/[^/]+$'),
   new RegExp('^/api/sandbox/asset/[^/]+$'),
+  // 首页随机图 / 消息里的图片与代理、备份包下载，也都是 <img src> / <a href> 直连，
+  // 带不上请求头，只能把 token 放 query（后两条另有二级密码把关）
+  new RegExp('^/api/home/random-image$'),
+  new RegExp('^/api/chat/asset/[^/]+$'),
+  new RegExp('^/api/chat/proxy$'),
+  new RegExp('^/api/backup/download$'),
   new RegExp('^/api/helper/transit$'),
 ]
 
