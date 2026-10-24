@@ -2,11 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import GIcon from '@/components/GIcon.vue'
 import { API_BASE } from '@/utils/env'
+import { useAuthStore } from '@/stores/auth'
 import type { PluginItem } from '@/types'
 
 /**
  * 插件图标。
- * 优先用插件自带的图片（iconPath 存在时走 /plugin/s/:name/icon，该接口无需 token），
+ * 优先用插件自带的图片（iconPath 存在时走 /plugin/s/:name/icon，用弱令牌鉴权），
  * 其次用 iconify 图标名，最后回落到默认插件图标。
  */
 const props = withDefaults(
@@ -17,17 +18,23 @@ const props = withDefaults(
   { size: 36 },
 )
 
+const auth = useAuthStore()
 const imgFailed = ref(false)
 
 const imgUrl = computed(() => {
   if (!props.plugin?.iconPath) return ''
-  return `${API_BASE}/plugin/s/${encodeURIComponent(props.plugin.name)}/icon`
+  // 弱令牌是登录后异步拿到的：还没就绪时先显示内置图标，别发一轮注定 401 的请求
+  if (!auth.liteToken) return ''
+  const q = `?token=${encodeURIComponent(auth.liteToken)}`
+  return `${API_BASE}/plugin/s/${encodeURIComponent(props.plugin.name)}/icon${q}`
 })
 
 const iconName = computed(() => props.plugin?.icon || 'ant-design:api-outlined')
 
 // 换插件时重置失败标记，否则会误判
 watch(() => props.plugin?.name, () => (imgFailed.value = false))
+// 弱令牌是登录后异步拿到的，拿到后重试一次裂掉的图标
+watch(() => auth.liteToken, () => (imgFailed.value = false))
 </script>
 
 <template>

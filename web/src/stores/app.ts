@@ -64,7 +64,7 @@ export const useAppStore = defineStore('app', () => {
     if (live.value.themeId !== 'glass') return ''
     const name = live.value.backgrounds[live.value.mode]
     if (!name) return ''
-    const q = new URLSearchParams({ name, token: auth.liteToken || auth.token })
+    const q = new URLSearchParams({ name, token: auth.liteToken })
     return `${API_BASE}/theme/background/image?${q.toString()}`
   })
 

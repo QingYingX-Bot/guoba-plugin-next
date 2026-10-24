@@ -76,7 +76,8 @@ function bgUrl(mode: ThemeMode) {
   if (!name) return ''
   const q = new URLSearchParams({
     name,
-    token: auth.liteToken || auth.token,
+    // 只认弱令牌：正式登录令牌不进 URL（服务端对静态资源路径也只接受弱令牌）
+    token: auth.liteToken,
     _t: String(imgTs.value),
   })
   return `${API_BASE}/theme/background/image?${q.toString()}`

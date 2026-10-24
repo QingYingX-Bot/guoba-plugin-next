@@ -217,7 +217,7 @@ const shortcuts = [
 ]
 
 onMounted(async () => {
-  heroImg.value = homeRandomImageUrl(auth.token, Date.now())
+  heroImg.value = homeRandomImageUrl(auth.liteToken, Date.now())
 
   // 首页数据是主内容，插件数与天气都属于点缀，失败不影响页面
   try {

@@ -1,5 +1,7 @@
 import path from 'path'
 import net from 'net'
+import http from 'node:http'
+import https from 'node:https'
 import dns from 'dns/promises'
 import fetch from 'node-fetch'
 import {Result, Service, GuobaError} from '#guoba.framework';
@@ -113,6 +115,31 @@ async function resolveAll(hostname) {
   }
 }
 
+/**
+ * 把连接固定到刚才校验过的那个 IP。
+ *
+ * 只校验解析结果、再让 fetch 按域名连接的话，攻击者控制的 DNS 可以在两次解析之间换答案
+ * （DNS rebinding）：校验时是公网地址，真正连接时变成 127.0.0.1。
+ * 用 agent 的 lookup 强制返回已校验的地址，TLS 的 SNI / 证书校验仍按原域名走。
+ */
+function pinnedAgents(address) {
+  const family = net.isIP(address)
+  const lookup = (hostname, options, callback) => {
+    let opts = options
+    let cb = callback
+    if (typeof opts === 'function') {
+      cb = opts
+      opts = {}
+    }
+    if (opts?.all) return cb(null, [{address, family}])
+    cb(null, address, family)
+  }
+  return {
+    http: new http.Agent({lookup, keepAlive: false}),
+    https: new https.Agent({lookup, keepAlive: false}),
+  }
+}
+
 /** 限制读取大小：兼容 WHATWG ReadableStream 与 node-fetch v2 的 Node Stream */
 async function readLimitedBody(response, limit) {
   const declared = Number(response.headers.get('content-length') || 0)
@@ -207,6 +234,8 @@ export default class HelperService extends Service {
       if (!check.ok) {
         return Result.error(check.message, 403)
       }
+      // 连接固定到刚校验过的地址，防 DNS rebinding
+      const agents = pinnedAgents(check.address)
       let response
       try {
         response = await fetch(target.toString(), {
@@ -215,38 +244,46 @@ export default class HelperService extends Service {
           timeout: TRANSIT_TIMEOUT,
           signal: makeTimeoutSignal(TRANSIT_TIMEOUT),
           headers: {'user-agent': 'Guoba-Plugin/README-Proxy'},
+          agent: (parsed) => (parsed.protocol === 'https:' ? agents.https : agents.http),
         })
       } catch (e) {
+        agents.http.destroy()
+        agents.https.destroy()
         logger.error('[Guoba] 中转图片请求失败：' + (e?.message || e))
         return Result.error('请求失败', 502)
       }
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get('location')
-        if (!location) return Result.error('重定向地址缺失', 502)
-        try {
-          target = new URL(location, target)
-        } catch {
-          return Result.error('重定向地址无效', 502)
-        }
-        continue
-      }
-      if (!response.ok) {
-        return Result.error('请求失败', response.status)
-      }
-      const contentType = String(response.headers.get('content-type') || '')
-      if (!/^image\//i.test(contentType)) {
-        return Result.error('只允许图片', 403)
-      }
-      let buffer
       try {
-        buffer = await readLimitedBody(response, TRANSIT_MAX_BYTES)
-      } catch (e) {
-        return Result.error(e.message || '图片过大', 413)
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          const location = response.headers.get('location')
+          if (!location) return Result.error('重定向地址缺失', 502)
+          try {
+            target = new URL(location, target)
+          } catch {
+            return Result.error('重定向地址无效', 502)
+          }
+          continue
+        }
+        if (!response.ok) {
+          return Result.error('请求失败', response.status)
+        }
+        const contentType = String(response.headers.get('content-type') || '')
+        if (!/^image\//i.test(contentType)) {
+          return Result.error('只允许图片', 403)
+        }
+        let buffer
+        try {
+          buffer = await readLimitedBody(response, TRANSIT_MAX_BYTES)
+        } catch (e) {
+          return Result.error(e.message || '图片过大', 413)
+        }
+        res.setHeader('Content-Type', contentType)
+        res.setHeader('Cache-Control', 'public, max-age=3600')
+        res.setHeader('Content-Length', String(buffer.length))
+        return buffer
+      } finally {
+        agents.http.destroy()
+        agents.https.destroy()
       }
-      res.setHeader('Content-Type', contentType)
-      res.setHeader('Cache-Control', 'public, max-age=3600')
-      res.setHeader('Content-Length', String(buffer.length))
-      return buffer
     }
     return Result.error('重定向次数过多', 502)
   }
@@ -262,7 +299,7 @@ export default class HelperService extends Service {
     if (net.isIP(hostname)) {
       return isBlockedIp(hostname)
         ? {ok: false, message: '禁止访问内部地址'}
-        : {ok: true}
+        : {ok: true, address: hostname}
     }
     if (
       hostname === 'localhost' ||
@@ -282,7 +319,8 @@ export default class HelperService extends Service {
     if (!addresses.length || addresses.some(item => isBlockedIp(item.address))) {
       return {ok: false, message: '禁止访问内部地址'}
     }
-    return {ok: true}
+    // 固定第一个地址，实际连接就用它，不再让 DNS 二次解析
+    return {ok: true, address: addresses[0].address}
   }
 
 

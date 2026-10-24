@@ -7,6 +7,12 @@ import {matchAuthPath} from "../utils/authPath.js";
 const liteInclude = [
   new RegExp('^/api/plugin/miao/help/theme/.+'),
   new RegExp('^/api/plugin/miao/help/icon$'),
+  // 插件图标也是 <img> 直连，用弱令牌鉴权，避免未登录就能枚举已装插件
+  new RegExp('^/api/plugin/s/[^/]+/icon$'),
+  // 下面几条都是只读的图片/摘要资源，弱令牌足够
+  new RegExp('^/api/helper/transit$'),
+  new RegExp('^/api/sandbox/asset/[^/]+$'),
+  new RegExp('^/api/home/random-image$'),
   new RegExp('^/api/custom-page/asset/[^/]+/.+'),
   new RegExp('^/api/theme/background/image$'),
 ]
@@ -26,17 +32,27 @@ const queryTokenAllow = [
   // 带不上请求头；三条都只读文件，token 放 query 可接受
   new RegExp('^/api/plugin/miao/help/theme/(main|bg)$'),
   new RegExp('^/api/plugin/miao/help/icon$'),
-  new RegExp('^/api/file/download$'),
-  new RegExp('^/api/file/download-dir$'),
+  // 插件图标同理，弱令牌放 query
+  new RegExp('^/api/plugin/s/[^/]+/icon$'),
   new RegExp('^/api/custom-page/asset/[^/]+/[^/]+$'),
   new RegExp('^/api/sandbox/asset/[^/]+$'),
-  // 首页随机图 / 消息里的图片与代理、备份包下载，也都是 <img src> / <a href> 直连，
-  // 带不上请求头，只能把 token 放 query（后两条另有二级密码把关）
+  // 首页随机图是 <img src> 直连，且不属于敏感数据，仍允许 query 带令牌
   new RegExp('^/api/home/random-image$'),
-  new RegExp('^/api/chat/asset/[^/]+$'),
-  new RegExp('^/api/chat/proxy$'),
-  new RegExp('^/api/backup/download$'),
   new RegExp('^/api/helper/transit$'),
+]
+
+/**
+ * 只能凭「媒体票据」访问的路径：URL 里放短期票据，不放正式登录令牌。
+ * [路径, 用途] —— 备份票据不能拿去读聊天图片，反之亦然。
+ */
+const ticketAllow = [
+  [new RegExp('^/api/backup/download$'), 'backup'],
+  [new RegExp('^/api/chat/asset/[^/]+$'), 'chat'],
+  [new RegExp('^/api/chat/proxy$'), 'chat'],
+  // 文件下载/预览以前把正式令牌和二级密码凭证一起塞进 URL，泄漏一次等于「登录+解锁」，
+  // 同样换成短期票据
+  [new RegExp('^/api/file/download$'), 'file'],
+  [new RegExp('^/api/file/download-dir$'), 'file'],
 ]
 
 // 不需要拦截的路径
@@ -50,8 +66,6 @@ const exclude = [
   new RegExp('^/api/frozen/status$'),
   // 只认本机回环调用（HelperService 有 isLoopbackAddress 兜底）
   new RegExp('^/api/helper/release_port$'),
-  // 插件图标是图片，前端 <img> 带不上请求头，放行不影响鉴权面
-  new RegExp('^/api/plugin/s/.+/icon$'),
 ]
 
 /**
@@ -62,6 +76,7 @@ export default class TokenInterceptor extends Interceptor {
 
   systemService = autowired('systemService')
   loginService = autowired('loginService')
+  mediaTicketService = autowired('mediaTicketService')
 
   constructor(app) {
     super(app)
@@ -75,8 +90,26 @@ export default class TokenInterceptor extends Interceptor {
     } else {
       // 默认只认 header；只有下载类接口允许 token 走 query
       let token = req.headers[Constant.TOKEN_KEY]
+      let fromQuery = false
       if (!token && queryTokenAllow.some(reg => this.check(reg, req))) {
         token = req.query?.token
+        fromQuery = true
+      }
+      // 静态资源路径在 query 里只认弱令牌：正式登录令牌不该出现在任何 URL 里
+      if (token && fromQuery && liteInclude.some(reg => this.check(reg, req))) {
+        if (token !== this.systemService.getLiteToken()) token = ''
+      }
+      // 备份下载 / 聊天图片：URL 里拿到的是短期票据，换回签发时的登录令牌。
+      // 票据代表「签发时已解锁二级密码」，gate 拦截器会认这个标记直接放行。
+      if (!token) {
+        const hit = ticketAllow.find(([reg]) => this.check(reg, req))
+        if (hit) {
+          const bound = await this.mediaTicketService.redeem(req.query?.ticket, hit[1])
+          if (bound) {
+            token = bound
+            req.authViaTicket = true
+          }
+        }
       }
       // iframe 里的 css/js 由浏览器按相对路径请求，带不上请求头，只能从Cookie里取。
       // 浏览器会自动携带Cookie，所以只在弱令牌路径上认它，不给其他接口留CSRF口子。

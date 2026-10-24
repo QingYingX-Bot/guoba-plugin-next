@@ -25,6 +25,7 @@ import {
   apiChatSendRaw,
   apiChatStatus,
   apiChatTail,
+  apiCreateMediaTicket,
   chatAssetUrl,
   chatProxyUrl,
   type ChatActiveItem,
@@ -42,7 +43,6 @@ import {
 import { writeText } from '@/utils/clipboard'
 import { scrollPageToBottom } from '@/utils/scroll'
 import { useAuthStore } from '@/stores/auth'
-import { useGateStore } from '@/stores/gate'
 
 /** 轮询间隔。消息没有日志那么密，2 秒的延迟看着还算即时 */
 const INTERVAL = 2000
@@ -102,7 +102,6 @@ const RAW_TABS: Array<{ key: RawKey; title: string; hint: string; miss: string }
 ]
 
 const auth = useAuthStore()
-const gate = useGateStore()
 
 const status = ref<ChatStatus | null>(null)
 const bots = computed(() => status.value?.bots ?? [])
@@ -215,9 +214,24 @@ function markdownOf(segments: MsgSeg[]) {
 
 /* ---------------- 段渲染要用的注入 ---------------- */
 
-provide('msgAssetUrl', (assetId: string) => chatAssetUrl(assetId, auth.token, gate.gateToken))
+/**
+ * 聊天图片走短期媒体票据：URL 里不再出现登录令牌。
+ * 票据 5 分钟过期，页面停留久了要换一张，否则新加载的图片会 401。
+ */
+const mediaTicket = ref('')
+let ticketTimer: number | undefined
+
+async function refreshMediaTicket() {
+  try {
+    mediaTicket.value = (await apiCreateMediaTicket('chat')).ticket
+  } catch {
+    // 取不到就保持空票据，页面其余部分照常可用
+  }
+}
+
+provide('msgAssetUrl', (assetId: string) => chatAssetUrl(assetId, mediaTicket.value))
 // QQ 直链的 rkey 会过期，加载失败时由服务端代拉一次
-provide('msgProxyUrl', (url: string) => chatProxyUrl(url, auth.token, gate.gateToken))
+provide('msgProxyUrl', (url: string) => chatProxyUrl(url, mediaTicket.value))
 
 /**
  * reply 段显示「昵称：摘要」—— 被引用的那条得在页面上还留着才查得到，
@@ -826,8 +840,11 @@ function syncNarrow() {
 
 onMounted(async () => {
   await loadStatus()
+  await refreshMediaTicket()
   await pull()
   timer = window.setInterval(pull, INTERVAL)
+  // 票据 5 分钟过期，页面停留久了要换一张，不然新加载的图片会 401
+  ticketTimer = window.setInterval(refreshMediaTicket, 4 * 60 * 1000)
   // 改窗宽会挪动消息流那一栏，开着的弹窗跟着走
   window.addEventListener('resize', syncRawPos)
   narrowMq.addEventListener('change', syncNarrow)
@@ -836,6 +853,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
   timer = undefined
+  if (ticketTimer) window.clearInterval(ticketTimer)
+  ticketTimer = undefined
   ro?.disconnect()
   ro = undefined
   window.removeEventListener('resize', syncRawPos)

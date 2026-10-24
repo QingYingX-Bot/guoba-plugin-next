@@ -9,10 +9,11 @@
  * 文件夹的大小和下载都要走完整棵子树，所以都是**点了才做**：列目录时不顺手算大小
  * （`node_modules` 一层就十万个 inode，进目录就卡死），下载则由后端边打包边发。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
 import {
+  apiCreateMediaTicket,
   apiFileCreate,
   apiFileDelete,
   apiFileDirSize,
@@ -26,11 +27,21 @@ import {
   fileDownloadUrl,
   type FsFile,
 } from '@/api'
-import { useAuthStore } from '@/stores/auth'
-import { useGateStore } from '@/stores/gate'
 
-const auth = useAuthStore()
-const gate = useGateStore()
+/**
+ * 下载/预览走短期媒体票据：URL 里只放票据，正式令牌和二级密码凭证都不进 URL。
+ * 票据 5 分钟过期，页面停留久了要换一张。
+ */
+const mediaTicket = ref('')
+let ticketTimer: number | undefined
+
+async function refreshTicket() {
+  try {
+    mediaTicket.value = (await apiCreateMediaTicket('file')).ticket
+  } catch {
+    // 取不到就保持空票据，错误由请求层提示
+  }
+}
 
 /** 当前目录，相对 Yunzai 根；空串 = 根 */
 const currentPath = ref('')
@@ -219,7 +230,7 @@ async function savePreview() {
 
 /** 图片 / 文本下载地址，token 走 query 才能直接进 <img> / <a> */
 function fileUrl(rel: string) {
-  return fileDownloadUrl(rel, auth.token, gate.gateToken)
+  return fileDownloadUrl(rel, mediaTicket.value)
 }
 
 /* ---------------- 新建 ---------------- */
@@ -372,12 +383,12 @@ async function uploadDirFiles(files: File[]) {
 
 function downloadUrl(f: FsFile) {
   return f.isDir
-    ? fileDownloadDirUrl(joinPath(f.name), auth.token, gate.gateToken)
-    : fileDownloadUrl(joinPath(f.name), auth.token, gate.gateToken)
+    ? fileDownloadDirUrl(joinPath(f.name), mediaTicket.value)
+    : fileDownloadUrl(joinPath(f.name), mediaTicket.value)
 }
 
 /** 当前目录整个打包下载（根目录也能下，包名会是 Yunzai.zip） */
-const currentZipUrl = computed(() => fileDownloadDirUrl(currentPath.value, auth.token, gate.gateToken))
+const currentZipUrl = computed(() => fileDownloadDirUrl(currentPath.value, mediaTicket.value))
 
 /** 用一个临时 <a> 触发下载：确认之后才走，不能事先写死在 href 上 */
 function triggerDownload(url: string) {
@@ -452,7 +463,17 @@ function dirSizeTitle(f: FsFile) {
   return d.partial ? `${base}（目录太大只数了一部分，实际更多）` : base
 }
 
-onMounted(load)
+onMounted(async () => {
+  await refreshTicket()
+  await load()
+  // 票据 5 分钟过期，停留久了要换一张
+  ticketTimer = window.setInterval(refreshTicket, 4 * 60 * 1000)
+})
+
+onBeforeUnmount(() => {
+  if (ticketTimer) window.clearInterval(ticketTimer)
+  ticketTimer = undefined
+})
 </script>
 
 <template>

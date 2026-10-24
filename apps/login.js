@@ -115,7 +115,8 @@ export class GuobaLogin extends plugin {
    * （auth.securityMaster，没配置就发给触发指令的主人本人）。
    */
   async toggleWan () {
-    if (!this.e.isMaster) return false
+    // 开外网等于把面板暴露到公网，权限必须和解冻一致：主人本人 + 私聊 + 指定安全接收人
+    if (!this.e.isMaster || !this.e.isPrivate || !this.isSecurityMaster()) return false
     const open = /开启/.test(this.e.msg)
     try {
       cfg.set('server.lanOnly', !open)

@@ -69,7 +69,7 @@ function fixImages(el: HTMLElement | null) {
   el.querySelectorAll('img').forEach((img) => {
     const src = img.getAttribute('src')
     if (src && /^https?:\/\//.test(src) && !src.startsWith(transitBase)) {
-      const token = encodeURIComponent(auth.token ?? '')
+      const token = encodeURIComponent(auth.liteToken ?? '')
       img.setAttribute('src', `${transitBase}?url=${encodeURIComponent(src)}&token=${token}`)
     }
   })

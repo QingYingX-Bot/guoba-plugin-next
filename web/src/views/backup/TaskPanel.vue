@@ -7,9 +7,13 @@
  */
 import { computed, nextTick, ref, watch } from 'vue'
 import GIcon from '@/components/GIcon.vue'
-import { backupDownloadUrl, type BackupDepsResult, type BackupLog, type BackupTask } from '@/api'
-import { useAuthStore } from '@/stores/auth'
-import { useGateStore } from '@/stores/gate'
+import {
+  apiCreateMediaTicket,
+  backupDownloadUrl,
+  type BackupDepsResult,
+  type BackupLog,
+  type BackupTask,
+} from '@/api'
 import { formatBytes } from '@/utils/format'
 import { PHASE_TEXT } from './types'
 
@@ -22,8 +26,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{ cancel: [] }>()
 
-const auth = useAuthStore()
-const gate = useGateStore()
+/** 下载先换一张短期票据，URL 里不再带登录令牌 */
+async function downloadPack(file: string) {
+  try {
+    const { ticket } = await apiCreateMediaTicket('backup')
+    window.location.href = backupDownloadUrl(file, ticket)
+  } catch {
+    // 错误已由请求层提示
+  }
+}
 const logBox = ref<HTMLElement | null>(null)
 /** 点过取消就把按钮锁住：clone 一个大仓库要几十秒才收得住，不锁的话用户会连点十几次 */
 const canceling = ref(false)
@@ -141,7 +152,7 @@ watch(
         备份完成：{{ packResult.file }}（{{ formatBytes(packResult.size) }}，{{ packResult.files }} 个文件）
       </template>
       <template #action>
-        <a-button size="small" type="link" :href="backupDownloadUrl(packResult.file, auth.token, gate.gateToken)">
+        <a-button size="small" type="link" @click="downloadPack(packResult.file)">
           <GIcon icon="ant-design:cloud-download-outlined" :size="13" />
           下载
         </a-button>
