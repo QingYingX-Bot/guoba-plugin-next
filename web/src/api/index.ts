@@ -50,6 +50,10 @@ export const apiRevokeTrustedIp = (ip: string) => del<LoginSecurity>(`/login/sec
 
 export const apiClearTrustedIps = () => del<LoginSecurity>('/login/security/trusted-ips')
 
+/** 手动添加可信 IP；IP 已存在时只更新备注 */
+export const apiAddTrustedIp = (ip: string, note?: string) =>
+  post<LoginSecurity>('/login/security/trusted-ips', { ip, note }, { showSuccess: true })
+
 /** 撤销一台可信设备，那台下次登录就得重新走验证码 */
 export const apiRevokeTrustedDevice = (id: string) =>
   del<LoginSecurity>(`/login/security/trusted-devices/${encodeURIComponent(id)}`)
@@ -99,13 +103,23 @@ export interface GateStatus {
   locked: boolean
   /** 锁定剩余秒数（旧字段，当前恒为 0） */
   lockSeconds: number
+  /** 来源 IP 在可信 IP 列表里 */
+  ipTrusted?: boolean
+  /** 当前浏览器持有有效的可信设备凭证 */
+  deviceTrusted?: boolean
+  /** 上面两者之一命中：只有可信来源才允许「记住这台设备」 */
+  trusted?: boolean
 }
 
 export const apiGetGateStatus = () =>
   get<GateStatus>('/gate/status', undefined, { showError: false })
 
-export const apiGateUnlock = (password: string) =>
-  post<{ gateToken: string }>('/gate/unlock', { password }, { showError: false })
+export const apiGateUnlock = (password: string, remember = false) =>
+  post<{ gateToken: string; remember?: boolean; ttl?: number }>(
+    '/gate/unlock',
+    { password, remember },
+    { showError: false },
+  )
 
 export const apiSetGatePassword = (body: { currentPassword: string; password: string }) =>
   put<GateStatus>('/gate/password', body, { showSuccess: true })
@@ -1267,17 +1281,17 @@ export const apiChatForward = (body: {
     nodes: Array<{ nickname: string; userId: string; time: number | null; segments: MsgSeg[] }>
   }>('/chat/forward', body)
 
-/** 自己发出去的图片的取用地址 */
-export function chatAssetUrl(assetId: string, token: string, gateToken?: string) {
-  const q = new URLSearchParams({ token })
-  if (gateToken) q.set('gateToken', gateToken)
+/** 自己发出去的图片的取用地址（用短期媒体票据，不放登录令牌） */
+export function chatAssetUrl(assetId: string, ticket: string) {
+  const q = new URLSearchParams()
+  if (ticket) q.set('ticket', ticket)
   return `${API_BASE}/chat/asset/${encodeURIComponent(assetId)}?${q.toString()}`
 }
 
-/** QQ 直链的 rkey 过期后的兜底：交给服务端代拉一次 */
-export function chatProxyUrl(url: string, token: string, gateToken?: string) {
-  const q = new URLSearchParams({ url, token })
-  if (gateToken) q.set('gateToken', gateToken)
+/** QQ 直链的 rkey 过期后的兜底：交给服务端代拉一次（同样走媒体票据） */
+export function chatProxyUrl(url: string, ticket: string) {
+  const q = new URLSearchParams({ url })
+  if (ticket) q.set('ticket', ticket)
   return `${API_BASE}/chat/proxy?${q.toString()}`
 }
 
@@ -1322,9 +1336,10 @@ export const apiFileUpload = (fd: FormData) =>
   post<{ ok: boolean; saved: string[] }>('/file/upload', fd)
 
 /** 下载地址，token 走 query 才能直接写进 <a href> */
-export function fileDownloadUrl(path: string, token: string, gateToken?: string) {
-  const q = new URLSearchParams({ path, token })
-  if (gateToken) q.set('gateToken', gateToken)
+/** 文件下载地址（用短期媒体票据，不放登录令牌） */
+export function fileDownloadUrl(path: string, ticket: string) {
+  const q = new URLSearchParams({ path })
+  if (ticket) q.set('ticket', ticket)
   return `${API_BASE}/file/download?${q.toString()}`
 }
 
@@ -1340,9 +1355,9 @@ export interface FsDirSize {
 export const apiFileDirSize = (path: string) => get<FsDirSize>('/file/dir-size', { path })
 
 /** 文件夹打包 zip 下载的地址，同样把 token 放 query */
-export function fileDownloadDirUrl(path: string, token: string, gateToken?: string) {
-  const q = new URLSearchParams({ path, token })
-  if (gateToken) q.set('gateToken', gateToken)
+export function fileDownloadDirUrl(path: string, ticket: string) {
+  const q = new URLSearchParams({ path })
+  if (ticket) q.set('ticket', ticket)
   return `${API_BASE}/file/download-dir?${q.toString()}`
 }
 
@@ -1364,6 +1379,8 @@ export interface TermStatus {
   attached: boolean
   /** 真终端风格提示符，如 `root@chan:~/Yunzai# ` */
   prompt: string
+  /** security.enableTerminal：关着时只能看状态，不能执行命令 */
+  enabled: boolean
 }
 
 /** 执行命令，写入 shell 的 stdin */
@@ -1388,6 +1405,10 @@ export const apiTermRestart = () =>
 
 /** 会话信息 */
 export const apiTermStatus = () => get<TermStatus>('/term/status', {}, { showError: false })
+
+/** 开关终端（写回 security.enableTerminal，需二级密码解锁） */
+export const apiTermSetEnabled = (enabled: boolean) =>
+  post<{ enabled: boolean }>('/term/enabled', { enabled }, { showError: false })
 
 /* ---------------- 备份还原 ---------------- */
 
@@ -1651,12 +1672,16 @@ export const apiBackupSettings = () => get<BackupSettings>('/backup/settings')
 export const apiBackupSaveSettings = (body: BackupSettings) =>
   post<BackupSettings>('/backup/settings', body)
 
-/** 下载地址，token 和二级密码凭证都走 query 才能直接写进 <a href> */
-export function backupDownloadUrl(file: string, token: string, gateToken?: string) {
-  const q = new URLSearchParams({ file, token })
-  if (gateToken) q.set('gateToken', gateToken)
+/** 下载地址：URL 里只放短期媒体票据，不放登录令牌 */
+export function backupDownloadUrl(file: string, ticket: string) {
+  const q = new URLSearchParams({ file })
+  if (ticket) q.set('ticket', ticket)
   return `${API_BASE}/backup/download?${q.toString()}`
 }
+
+/** 申请媒体票据（scope：backup 只能下载备份，chat 只能读消息图片） */
+export const apiCreateMediaTicket = (scope: 'chat' | 'backup') =>
+  post<{ ticket: string; ttl: number }>('/media-ticket', { scope })
 
 export * from './miao'
 export { request, get, post, put, del } from './request'

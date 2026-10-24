@@ -69,8 +69,11 @@ export class AccessGateService extends Service {
     const gateToken = this.getGateToken(req)
     if (!loginToken || !gateToken) return false
     const key = this.gateTokenKey(gateToken)
-    const bound = await redis.get(key)
-    if (!bound || bound !== sha256(loginToken)) return false
+    const raw = await redis.get(key)
+    if (!raw) return false
+    // 「记住」的凭证带 r: 前缀，绑定关系还是同一份登录令牌
+    const bound = String(raw).startsWith('r:') ? String(raw).slice(2) : String(raw)
+    if (bound !== sha256(loginToken)) return false
     this.#renew(gateToken)
     return true
   }
@@ -80,16 +83,19 @@ export class AccessGateService extends Service {
     try {
       const key = this.gateTokenKey(gateToken)
       const promise = (async () => {
-        if (typeof redis.ttl === 'function') {
-          const ttl = await redis.ttl(key)
-          if (ttl < 0 || ttl > Constant.GATE_UNLOCK_RENEW_GAP) return
+        // value 前缀 r: 表示「记住」签发的长期凭证，按长期 TTL 续，别续成 12 小时把它吃掉
+        const current = typeof redis.get === 'function' ? await redis.get(key) : null
+        if (!current) return
+        const longLived = String(current).startsWith('r:')
+        const ttl = longLived ? Constant.GATE_UNLOCK_REMEMBER_TTL : Constant.GATE_UNLOCK_TTL
+        if (!longLived && typeof redis.ttl === 'function') {
+          const remain = await redis.ttl(key)
+          if (remain < 0 || remain > Constant.GATE_UNLOCK_RENEW_GAP) return
         }
         if (typeof redis.expire === 'function') {
-          await redis.expire(key, Constant.GATE_UNLOCK_TTL)
+          await redis.expire(key, ttl)
         } else {
-          // 兜底：重写一遍 value 顺带把 EX 带上（key 可能刚好过期，别把 null 写进去）
-          const current = await redis.get(key)
-          if (current) await redis.set(key, current, { EX: Constant.GATE_UNLOCK_TTL })
+          await redis.set(key, current, { EX: ttl })
         }
       })()
       Promise.resolve(promise).catch(() => {})
@@ -107,12 +113,28 @@ export class AccessGateService extends Service {
   async getStatus(req) {
     const configured = this.configured
     const unlocked = configured ? await this.isUnlocked(req) : true
+    const {ipTrusted, deviceTrusted} = this.#trustedSource(req)
     return {
       configured,
       unlocked,
       // 锁定状态由全局冻结接管，保留字段兼容前端
       locked: false,
       lockSeconds: 0,
+      // 可信来源才允许「记住这台设备」
+      ipTrusted,
+      deviceTrusted,
+      trusted: ipTrusted || deviceTrusted,
+    }
+  }
+
+  /** 来源是不是可信 IP / 可信设备（失败一律按不可信处理） */
+  #trustedSource(req) {
+    try {
+      const ipTrusted = !!this.loginSecurityService?.isTrusted?.(getClientIp(req))
+      const deviceTrusted = !!this.loginSecurityService?.verifyDevice?.(req, false)
+      return {ipTrusted, deviceTrusted}
+    } catch {
+      return {ipTrusted: false, deviceTrusted: false}
     }
   }
 
@@ -140,9 +162,13 @@ export class AccessGateService extends Service {
     await this.#clearAttempts(ip)
     const loginToken = this.getLoginToken(req)
     if (!loginToken) throw new GuobaError('登录态失效')
+    // 只有在可信设备 / 可信 IP 上才允许「记住」，其他地方最多解锁 12 小时
+    const {ipTrusted, deviceTrusted} = this.#trustedSource(req)
+    const remember = body?.remember === true && (ipTrusted || deviceTrusted)
+    const ttl = remember ? Constant.GATE_UNLOCK_REMEMBER_TTL : Constant.GATE_UNLOCK_TTL
     const gateToken = crypto.randomBytes(32).toString('hex')
-    await redis.set(this.gateTokenKey(gateToken), sha256(loginToken), { EX: Constant.GATE_UNLOCK_TTL })
-    return { gateToken }
+    await redis.set(this.gateTokenKey(gateToken), (remember ? 'r:' : '') + sha256(loginToken), { EX: ttl })
+    return { gateToken, remember, ttl }
   }
 
   /** 让当前登录令牌立即失效（不影响其它设备上的登录） */

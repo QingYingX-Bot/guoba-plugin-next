@@ -13,6 +13,7 @@ import {
   apiTermExec,
   apiTermInterrupt,
   apiTermRestart,
+  apiTermSetEnabled,
   apiTermStatus,
   apiTermTail,
   type TermLine,
@@ -41,6 +42,9 @@ const DANGEROUS = [
 ]
 
 const status = ref<TermStatus | null>(null)
+/** 未拿到状态前先按「关」渲染：宁可不让人乱敲，也别让开关显示成开 */
+const enabled = ref(false)
+const toggling = ref(false)
 const lines = ref<TermLine[]>([])
 const input = ref('')
 const follow = ref(true)
@@ -132,6 +136,7 @@ async function doExec(cmd: string) {
 
 function onEnter(e: KeyboardEvent) {
   if (e.shiftKey) return
+  if (!enabled.value) return
   const cmd = input.value.trim()
   if (!cmd) return
   e.preventDefault()
@@ -202,11 +207,55 @@ async function restart() {
   }
 }
 
+/* ---------------- 终端开关 ---------------- */
+
+async function applyEnabled(next: boolean) {
+  toggling.value = true
+  try {
+    const res = await apiTermSetEnabled(next)
+    enabled.value = res?.enabled ?? next
+    message.success(enabled.value ? '终端已启用' : '终端已关闭')
+    if (enabled.value) {
+      await loadStatus()
+      await pull()
+      nextTick(() => inputEl.value?.focus())
+    }
+  } catch (e: any) {
+    errMsg.value = e?.message || '终端开关保存失败'
+  } finally {
+    toggling.value = false
+  }
+}
+
+/** 开关是受控的，不能靠 v-model 直接翻：先弹确认，确认后才提交 */
+function onToggleEnabled(checked: boolean) {
+  if (checked) {
+    Modal.confirm({
+      title: '启用网页终端',
+      content: '终端等同服务器 shell，能改文件、装依赖、重启 Bot。确认只在自己的设备上开启？',
+      okText: '启用',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => applyEnabled(true),
+    })
+    return
+  }
+  Modal.confirm({
+    title: '关闭终端',
+    content: '关闭后无法在面板里执行命令，随时可以在这里重新打开。',
+    okText: '关闭',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: () => applyEnabled(false),
+  })
+}
+
 /* ---------------- 生命周期 ---------------- */
 
 async function loadStatus() {
   try {
     status.value = await apiTermStatus()
+    enabled.value = status.value?.enabled === true
   } catch {
     // 状态是附加信息，取不到就算了
   }
@@ -246,7 +295,11 @@ onBeforeUnmount(() => {
       </a-tag>
       <span class="g-term-cwd">{{ status?.cwd ?? '' }}</span>
       <span class="g-term-gap" />
-      <a-button size="small" @click="interrupt" title="中断当前前台进程，等价键盘 Ctrl+C">
+      <span class="g-term-switch">
+        <a-switch size="small" :checked="enabled" :loading="toggling" @change="onToggleEnabled" />
+        终端
+      </span>
+      <a-button size="small" :disabled="!enabled" @click="interrupt" title="中断当前前台进程，等价键盘 Ctrl+C">
         <GIcon icon="ant-design:poweroff-outlined" :size="13" />
         Ctrl+C
       </a-button>
@@ -254,10 +307,14 @@ onBeforeUnmount(() => {
         <GIcon icon="ant-design:clear-outlined" :size="13" />
         清屏
       </a-button>
-      <a-button size="small" @click="restart">
+      <a-button size="small" :disabled="!enabled" @click="restart">
         <GIcon icon="ant-design:reload-outlined" :size="13" />
         重启
       </a-button>
+    </div>
+
+    <div v-if="!enabled" class="g-term-off">
+      终端已关闭，打开右上角「终端」开关后才能执行命令。
     </div>
 
     <div v-if="errMsg" class="g-term-err">{{ errMsg }}</div>
@@ -286,7 +343,14 @@ onBeforeUnmount(() => {
         autocomplete="off"
         spellcheck="false"
         class="g-term-field"
-        :placeholder="status?.running ? '命令执行中，可点 Ctrl+C 中断' : '输入命令，Enter 执行'"
+        :disabled="!enabled"
+        :placeholder="
+          !enabled
+            ? '终端已关闭，打开右上角开关后可用'
+            : status?.running
+              ? '命令执行中，可点 Ctrl+C 中断'
+              : '输入命令，Enter 执行'
+        "
         @keydown.enter="onEnter"
         @keydown="onInputKeydown"
       />
@@ -347,6 +411,24 @@ onBeforeUnmount(() => {
   background: var(--g-bg-soft);
   color: var(--g-danger);
   font-size: 12px;
+}
+
+.g-term-off {
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: var(--g-bg-soft);
+  color: var(--g-text-dim);
+  font-size: 12px;
+}
+
+.g-term-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--g-text-dim);
+  white-space: nowrap;
 }
 
 .g-term-box {

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Button, Input, Spin, message } from 'ant-design-vue'
+import { Button, Checkbox, Input, Spin, message } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
-import { apiResetGatePassword } from '@/api'
+import { apiResetGatePassword, type GateStatus } from '@/api'
 import { CREDENTIALS_RESET_CODE } from '@/utils/env'
 import { useGateStore } from '@/stores/gate'
 
@@ -24,6 +24,12 @@ const errorText = ref('')
 /** 服务端状态没拿到时的提示 */
 const loadError = ref('')
 
+/** 服务端返回的来源可信情况：只有可信设备 / 可信 IP 才允许记住 */
+const gateStatus = ref<GateStatus | null>(null)
+const canRemember = computed(() => !!gateStatus.value?.trusted)
+/** 可信来源默认勾上，省得每次都要勾 */
+const remember = ref(true)
+
 /** 解锁 / 忘记密码时的重置 */
 const mode = ref<'unlock' | 'reset'>('unlock')
 const resetting = ref(false)
@@ -42,6 +48,7 @@ async function refresh() {
   loadError.value = ''
   try {
     const status = await gate.check()
+    gateStatus.value = status
     // 没开二级密码、或者本次会话已经解锁过，就不用停在这
     if (!status.configured || status.unlocked) {
       router.replace(redirect.value)
@@ -61,9 +68,9 @@ async function submit() {
   submitting.value = true
   errorText.value = ''
   try {
-    await gate.unlock(password.value)
+    await gate.unlock(password.value, canRemember.value && remember.value)
     password.value = ''
-    message.success('已解锁')
+    message.success(remember.value && canRemember.value ? '已解锁，这台设备 30 天内免输' : '已解锁')
     router.replace(redirect.value)
   } catch (error: any) {
     errorText.value = error?.message || '二级密码错误'
@@ -201,6 +208,15 @@ onMounted(refresh)
           >
             <template #prefix><GIcon icon="ant-design:key-outlined" :size="16" /></template>
           </Input.Password>
+          <Checkbox v-if="canRemember" v-model:checked="remember" class="g-gate-remember">
+            记住这台设备，30 天内不再询问
+            <span class="g-gate-remember-sub">
+              （{{ gateStatus?.deviceTrusted ? '可信设备' : '可信 IP' }}）
+            </span>
+          </Checkbox>
+          <p v-else class="g-gate-hint">
+            当前来源不在可信设备 / 可信 IP 里，本次解锁只在当前浏览器会话有效。
+          </p>
           <p v-if="errorText" class="g-gate-error">{{ errorText }}</p>
           <Button type="primary" size="large" block :loading="submitting" @click="submit">
             解锁
@@ -264,6 +280,27 @@ onMounted(refresh)
   margin: 10px 0 0;
   font-size: 12px;
   color: var(--g-danger);
+}
+
+.g-gate-remember {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -4px 0 14px;
+  font-size: 13px;
+  color: var(--g-text);
+}
+
+.g-gate-remember-sub {
+  color: var(--g-text-dim);
+  font-size: 12px;
+}
+
+.g-gate-hint {
+  margin: -4px 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--g-text-dim);
 }
 
 

@@ -42,6 +42,8 @@ export default {
   GATE_PASSWORD_ATTEMPT_WINDOW: 900,
   // 解锁凭证有效期（秒）。浏览器会话里保存，一直用就一直续
   GATE_UNLOCK_TTL: 12 * 3600,
+  // 「记住这台设备」的凭证有效期（秒）：只有可信设备 / 可信 IP 才签发
+  GATE_UNLOCK_REMEMBER_TTL: 30 * 24 * 3600,
   // 剩余寿命低于这个值才续期，避免每个请求都写 redis
   GATE_UNLOCK_RENEW_GAP: 3600,
   // 前端放在请求头/query 里的解锁凭证字段名
@@ -72,6 +74,8 @@ export default {
   TRUSTED_DEVICE_TTL: 90 * 24 * 3600,
   // 最多记住几台，超了淘汰最久没用的
   TRUSTED_DEVICE_MAX: 10,
+  // 手动添加的可信 IP 上限，防止列表无限膨胀
+  TRUSTED_IP_MAX: 50,
   // 最后使用时间的写盘节流（毫秒），配置是yaml文件，没必要每次请求都写
   TRUSTED_DEVICE_TOUCH_GAP: 3600 * 1000,
 

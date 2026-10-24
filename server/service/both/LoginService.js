@@ -9,11 +9,21 @@ export class LoginService extends Service {
   }
 
   /** 注册并保存Token */
-  signToken(username) {
+  signToken(username, deviceId = '') {
     let token = jwt.sign({username}, cfg.getJwtSecret())
     // 将token存入redis
     let redisKey = this.getRedisKey(token)
     redis.set(redisKey, token, {EX: Constant.TOKEN_TTL})
+    // 记下这条会话属于哪台设备：撤销设备时按它把已登录的会话一起删掉。
+    // 用普通 key 而不是集合：宿主 redis 的内置降级实现方法名各不相同，get/set/del 最稳。
+    if (deviceId) {
+      try {
+        const key = Constant.REDIS_PREFIX + `device-session:${deviceId}:${token}`
+        Promise.resolve(redis.set(key, '1', {EX: Constant.TOKEN_TTL})).catch(() => {})
+      } catch {
+        // 索引写不进去不影响登录本身
+      }
+    }
     return token
   }
 
