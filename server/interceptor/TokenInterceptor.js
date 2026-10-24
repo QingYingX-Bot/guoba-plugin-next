@@ -6,6 +6,7 @@ import {matchAuthPath} from "../utils/authPath.js";
 // 弱令牌（只能用来访问静态资源等）
 const liteInclude = [
   new RegExp('^/api/plugin/miao/help/theme/.+'),
+  new RegExp('^/api/plugin/miao/help/icon$'),
   new RegExp('^/api/custom-page/asset/[^/]+/.+'),
   new RegExp('^/api/theme/background/image$'),
 ]
@@ -21,6 +22,10 @@ const include = [
 const queryTokenAllow = [
   // 背景图由 <img src> 直接请求，带不上请求头；只读一张图，token 放 query 可接受
   new RegExp('^/api/theme/background/image$'),
+  // 喵喵帮助的皮肤头图/底图和图标同样是 <img src> / CSS url() 直接请求，
+  // 带不上请求头；三条都只读文件，token 放 query 可接受
+  new RegExp('^/api/plugin/miao/help/theme/(main|bg)$'),
+  new RegExp('^/api/plugin/miao/help/icon$'),
   new RegExp('^/api/file/download$'),
   new RegExp('^/api/file/download-dir$'),
   new RegExp('^/api/custom-page/asset/[^/]+/[^/]+$'),
