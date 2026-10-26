@@ -60,11 +60,9 @@ const botAppId = inject<((uin?: string) => string) | null>('chatBotAppId', null)
  */
 const isQQBot = computed(() => (botAdapter?.(props.msg.botId) ?? '') === 'QQBot')
 
-/** 这条消息里有没有能收藏的表情：QQ 自带的小黄脸，或者表情包（图片 subType=1） */
+/** 这条消息里有没有能收藏的图：QQ 自带的小黄脸、表情包，或者一张普通图片 */
 const hasEmoji = computed(() =>
-  (props.msg.segments ?? []).some(
-    (s) => s.type === 'face' || (s.type === 'image' && s.subType === 1),
-  ),
+  (props.msg.segments ?? []).some((s) => s.type === 'face' || s.type === 'image'),
 )
 
 const name = computed(() => {

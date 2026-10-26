@@ -274,11 +274,11 @@ export class ChatEmojiService extends Service {
   }
 
   /**
-   * 把消息里的表情收进自定义。
+   * 把消息里的图收进自定义。
    *
-   * 右键「收藏表情」走这里：QQ 自带的小黄脸从静态资源里取图，表情包优先用回显时留的
-   * 字节，没有就按直链下载。只收表情段的，普通图片不碰 —— 不然一点右键就把聊天里的
-   * 照片全塞进来。
+   * 右键「收藏表情」走这里：QQ 自带的小黄脸从静态资源里取图，图片（表情包或普通图）
+   * 优先用回显时留的字节，没有就按直链下载 —— 主人明确要求普通图片也能收成表情。
+   * 单张超过 5MB 的直接跳过，别把整条收藏打回去。
    *
    * 优先用页面传上来的段：面板的内存缓冲只有 1000 条、重启还会清空，光靠 messageId
    * 去缓冲里找，翻几页历史消息就收藏不动了（主人实测踩过）。
@@ -288,7 +288,7 @@ export class ChatEmojiService extends Service {
     const list = fromPage.length
       ? fromPage
       : this.#pickEmojiSegs(this.chatService.getBuffered(messageId)?.segments)
-    if (!list.length) throw new GuobaError('这条消息里没有可收藏的表情')
+    if (!list.length) throw new GuobaError('这条消息里没有可收藏的图')
     const buffers = []
     for (const seg of list) {
       try {
@@ -306,7 +306,7 @@ export class ChatEmojiService extends Service {
 
   #pickEmojiSegs(segments) {
     return (Array.isArray(segments) ? segments : []).filter(
-      (s) => s && (s.type === 'face' || (s.type === 'image' && Number(s.subType) === 1)),
+      (s) => s && (s.type === 'face' || s.type === 'image'),
     )
   }
 

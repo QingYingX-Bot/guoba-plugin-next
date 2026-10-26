@@ -800,14 +800,14 @@ async function onResendMd(msg: ChatMsg) {
  */
 async function onCollectEmoji(msg: ChatMsg) {
   const segments = (msg.segments ?? [])
-    .filter((s) => s.type === 'face' || (s.type === 'image' && s.subType === 1))
+    .filter((s) => s.type === 'face' || s.type === 'image')
     .map((s) =>
       s.type === 'face'
         ? { type: 'face', id: String(s.id ?? '') }
         : { type: 'image', url: s.url, assetId: s.assetId },
     )
   if (!segments.length) {
-    message.warning('这条消息里没有可收藏的表情')
+    message.warning('这条消息里没有可收藏的图')
     return
   }
   try {
@@ -820,7 +820,8 @@ async function onCollectEmoji(msg: ChatMsg) {
 }
 
 /** 合并转发的内容在 QQ 服务端，点开时才去取，取回来填进段里 */
-async function onForward({ msg, seg }: { msg: ChatMsg; seg: MsgSeg }) {  const session = current.value
+async function onForward({ msg, seg }: { msg: ChatMsg; seg: MsgSeg }) {
+  const session = current.value
   if (!session) return
   const messageId = seg.id || msg.messageId
   if (!messageId) {
