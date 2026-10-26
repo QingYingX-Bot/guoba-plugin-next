@@ -25,6 +25,7 @@ import {
   apiChatSendRaw,
   apiChatStatus,
   apiChatTail,
+  apiChatEmojiImport,
   apiCreateMediaTicket,
   chatAssetUrl,
   chatProxyUrl,
@@ -556,6 +557,9 @@ async function onSend(payload: ChatSendPayload) {
       if (payload.ats?.length) {
         fd.set('ats', JSON.stringify(payload.ats.map((a) => ({ qq: a.qq, name: a.name }))))
       }
+      // 表情：QQ 自带的走 face id，收藏 / 自定义的是图片，后端负责换字节
+      if (payload.faces?.length) fd.set('faces', JSON.stringify(payload.faces))
+      if (payload.emojis?.length) fd.set('emojis', JSON.stringify(payload.emojis))
       for (const file of payload.images) fd.append('files', file)
       for (const file of payload.files) fd.append('files', file)
       data = await apiChatSend(fd)
@@ -787,9 +791,36 @@ async function onResendMd(msg: ChatMsg) {
   }
 }
 
+/**
+ * 右键「收藏表情」：把这条消息里的表情收进自定义表情。
+ *
+ * 段数据随请求一起传，不指望后端还能在内存里找到这条 —— 面板的缓冲只有 1000 条，
+ * 重启就清空，靠 messageId 去查的话历史消息全都收藏不了。
+ * 只认表情段（face / 表情包图片），普通图片不碰 —— 收藏的是表情，不是相册。
+ */
+async function onCollectEmoji(msg: ChatMsg) {
+  const segments = (msg.segments ?? [])
+    .filter((s) => s.type === 'face' || (s.type === 'image' && s.subType === 1))
+    .map((s) =>
+      s.type === 'face'
+        ? { type: 'face', id: String(s.id ?? '') }
+        : { type: 'image', url: s.url, assetId: s.assetId },
+    )
+  if (!segments.length) {
+    message.warning('这条消息里没有可收藏的表情')
+    return
+  }
+  try {
+    const data = await apiChatEmojiImport({ messageId: msg.messageId ?? '', segments })
+    if (data.added?.length) message.success(`已收藏 ${data.added.length} 张表情`)
+    else message.info('这些表情已经收藏过了')
+  } catch {
+    // 请求层已经弹过错误
+  }
+}
+
 /** 合并转发的内容在 QQ 服务端，点开时才去取，取回来填进段里 */
-async function onForward({ msg, seg }: { msg: ChatMsg; seg: MsgSeg }) {
-  const session = current.value
+async function onForward({ msg, seg }: { msg: ChatMsg; seg: MsgSeg }) {  const session = current.value
   if (!session) return
   const messageId = seg.id || msg.messageId
   if (!messageId) {
@@ -996,6 +1027,7 @@ const dateFlags = computed(() => {
                 @poke="onPoke"
                 @resend="onResend"
                 @resend-md="onResendMd"
+                @collect-emoji="onCollectEmoji"
               />
             </div>
           </div>
@@ -1013,6 +1045,8 @@ const dateFlags = computed(() => {
             :max-images="maxImages"
             :qqbot="isQQBot"
             :reply="replyTo"
+            :bot-id="current?.botId ?? ''"
+            :emoji-ticket="mediaTicket"
             @send="onSend"
             @cancel-reply="replyTo = null"
           />

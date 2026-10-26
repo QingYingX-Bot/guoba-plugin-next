@@ -9,6 +9,7 @@ import {ApiController} from '#guoba.platform'
 export class ChatController extends ApiController {
 
   chatService = autowired('chatService')
+  chatEmojiService = autowired('chatEmojiService')
 
   constructor(guobaApp) {
     super('/chat', guobaApp)
@@ -20,6 +21,11 @@ export class ChatController extends ApiController {
     this.get('/history', this.history)
     this.get('/tail', this.tail)
     this.get('/raw', this.raw)
+    this.get('/emoji', this.emoji)
+    this.get('/emoji/custom/:id', this.customEmojiImage)
+    this.post('/emoji/custom', this.uploadCustomEmoji)
+    this.post('/emoji/custom/from-message', this.importCustomEmoji)
+    this.delete('/emoji/custom/:id', this.removeCustomEmoji)
     this.post('/send', this.send)
     this.post('/send-raw', this.sendRaw)
     this.post('/recall', this.recall)
@@ -67,11 +73,53 @@ export class ChatController extends ApiController {
     return Result.ok(await this.chatService.getRaw({botId, type, id, messageId}))
   }
 
+  /**
+   * 表情面板的数据：收藏的表情 + 自定义表情。
+   *
+   * QQ 自带的表情是前端静态资源，不经这里。收藏表情要靠适配器现拉，
+   * 适配器不认时不让整个接口失败，把原因放进 favoritesError 交给面板提示。
+   */
+  async emoji(req) {
+    const {botId, refresh} = req.query ?? {}
+    return Result.ok(await this.chatEmojiService.snapshot({
+      botId, refresh: refresh === '1' || refresh === 'true',
+    }))
+  }
+
+  /** 自定义表情的图，直接写进 <img src>，令牌走媒体票据（见 TokenInterceptor） */
+  async customEmojiImage(req, res) {
+    const asset = await this.chatEmojiService.readCustom(req.params.id)
+    res.type(asset.mime)
+    // 文件名是内容哈希，同一 URL 的内容不会变
+    res.set('Cache-Control', 'private, max-age=86400, immutable')
+    res.send(asset.buffer)
+    return Result.VOID
+  }
+
+  /** 上传自定义表情，multipart，文件在 req.files（锅巴全局 multer 已落盘） */
+  async uploadCustomEmoji(req) {
+    return Result.ok(await this.chatEmojiService.saveCustom(req.files))
+  }
+
+  async removeCustomEmoji(req) {
+    return Result.ok(await this.chatEmojiService.removeCustom(req.params.id))
+  }
+
+  /** 右键「收藏表情」：把某条消息里的表情收进自定义表情 */
+  async importCustomEmoji(req) {
+    const {messageId, segments} = req.body ?? {}
+    return Result.ok(await this.chatEmojiService.importFromMessage({messageId, segments}))
+  }
+
   /** 发消息，会真的发到 QQ 上。文件走 multipart（锅巴全局挂的 multer 已把文件放进 req.files） */
   async send(req) {
-    const {botId, type, id, text, images, replyTo, replyMsgId, replyEventId, ats, kind, ark} = req.body ?? {}
+    const {
+      botId, type, id, text, images, replyTo, replyMsgId, replyEventId, ats, kind, ark,
+      faces, emojis,
+    } = req.body ?? {}
     return Result.ok(await this.chatService.send({
       botId, type, id, text, images, replyTo, replyMsgId, replyEventId, ats, kind, ark,
+      faces, emojis,
       files: req.files,
     }))
   }

@@ -817,6 +817,8 @@ export interface SandboxSegment {
   /** 图片等资源的取用 id，走 sandboxAssetUrl */
   assetId?: string
   mime?: string
+  /** 图片的 sub_type，1 表示表情包（面板里按小图渲染） */
+  subType?: number
   /** http 直链资源不落服务端，直接给 url */
   url?: string
   size?: number
@@ -992,6 +994,10 @@ export interface ChatSendPayload {
   files: File[]
   /** QQBot 的「msg_id 回复」勾选状态 */
   useMsgIdReply: boolean
+  /** 表情面板选的 QQ 自带表情 id */
+  faces: string[]
+  /** 表情面板选的收藏 / 自定义表情 */
+  emojis: Array<{ kind: 'fav' | 'custom'; url?: string; id?: string }>
 }
 
 /** 活跃摘要：会话 key -> 最后一条 + 未读 */
@@ -1225,6 +1231,69 @@ export const apiChatRaw = (params: {
   id: string
   messageId: string
 }) => get<ChatRaw>('/chat/raw', params)
+
+/**
+ * 表情面板的一张待发表情。
+ *
+ * QQ 自带表情用 face 段（前端直接从静态资源里挑 id），收藏与自定义表情都是图片，
+ * 通过 `emojis` 交给后端换成字节、带 sub_type=1 发出去。
+ */
+export interface ChatEmojiPick {
+  kind: 'face' | 'fav' | 'custom'
+  /** kind=face 时的 face id */
+  id?: string
+  /** kind=fav 时的图片地址 */
+  url?: string
+  /** 面板上显示用，face 是名称，其余是图片地址 */
+  name?: string
+}
+
+/** 用户上传的自定义表情，图片地址见 chatEmojiUrl */
+export interface ChatCustomEmoji {
+  id: string
+  ext: string
+  size: number
+  at: number
+}
+
+export interface ChatEmojiSnapshot {
+  /** 收藏表情的图片地址，适配器给什么就用什么 */
+  favorites: string[]
+  /** 适配器不支持 / 拉取失败时的原因，正常是空串 */
+  favoritesError: string
+  custom: ChatCustomEmoji[]
+}
+
+/** 表情面板数据：收藏 + 自定义。QQ 自带的表情是前端静态资源，不走这里 */
+export const apiChatEmoji = (params: { botId: string; refresh?: boolean }) =>
+  get<ChatEmojiSnapshot>('/chat/emoji', params, { showError: false })
+
+/** 上传自定义表情，multipart 的 files 字段，一次可以多张 */
+export const apiChatEmojiUpload = (fd: FormData) =>
+  post<{ added: string[]; custom: ChatCustomEmoji[] }>('/chat/emoji/custom', fd)
+
+export const apiChatEmojiRemove = (id: string) =>
+  del<{ removed: string; custom: ChatCustomEmoji[] }>(
+    `/chat/emoji/custom/${encodeURIComponent(id)}`,
+  )
+
+/**
+ * 右键「收藏表情」：把某条消息里的表情收进自定义表情。
+ *
+ * 段数据由页面一起传：后端的内存缓冲只有 1000 条、重启就清空，
+ * 只给 messageId 的话翻几页历史消息就收藏不动了。
+ */
+export const apiChatEmojiImport = (body: {
+  messageId: string
+  segments: Array<{ type: string; id?: string; url?: string; assetId?: string; subType?: number }>
+}) => post<{ added: string[]; custom: ChatCustomEmoji[] }>('/chat/emoji/custom/from-message', body)
+
+/** 自定义表情图片的取用地址（短期媒体票据，同 chatAssetUrl） */
+export function chatEmojiUrl(id: string, ticket: string) {
+  const q = new URLSearchParams()
+  if (ticket) q.set('ticket', ticket)
+  return `${API_BASE}/chat/emoji/custom/${encodeURIComponent(id)}?${q.toString()}`
+}
 
 /**
  * 发消息，**会真的发到 QQ 上**。

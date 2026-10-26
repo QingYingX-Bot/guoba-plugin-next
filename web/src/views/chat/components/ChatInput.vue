@@ -12,11 +12,19 @@
  * 图片以原始 File 对象提交（multipart），不再转 base64 —— 共享 TRSS 端口时 body
  * 解析器是宿主的 express.json，默认 100kb，一张图塞进 JSON 就 413 了。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
-import type { ChatReplyTarget, ChatSendMode, ChatSendPayload } from '@/api'
+import { apiChatEmoji, apiChatEmojiRemove, apiChatEmojiUpload, chatEmojiUrl } from '@/api'
+import type {
+  ChatCustomEmoji,
+  ChatEmojiPick,
+  ChatReplyTarget,
+  ChatSendMode,
+  ChatSendPayload,
+} from '@/api'
 import { filesFromHtml } from '@/utils/clipboard'
+import { withMountPrefix } from '@/utils/env'
 
 /** 预览用的图片，objectURL 由组件负责回收 */
 interface PickedImage {
@@ -41,6 +49,10 @@ const props = defineProps<{
   qqbot: boolean
   /** 引用的那条，父层给摘要与口径，这里只负责显示与清除 */
   reply: ChatReplyTarget | null
+  /** 当前会话的账号，表情面板要靠它取这个号的收藏表情 */
+  botId: string
+  /** 自定义表情图片的媒体票据，由页面定期续签（<img> 带不上请求头） */
+  emojiTicket: string
 }>()
 
 const emit = defineEmits<{
@@ -171,7 +183,7 @@ const canSend = computed(() => {
     case 'media':
       return !!mediaFiles.value.length
     default:
-      return !!text.value.trim() || !!images.value.length
+      return !!text.value.trim() || !!images.value.length || !!pickedEmojis.value.length
   }
 })
 
@@ -216,6 +228,10 @@ function submit() {
     ark: mode.value === 'ark' ? buildArkPayload() : '',
     files: mode.value === 'media' ? [...mediaFiles.value] : [],
     useMsgIdReply: useMsgIdReply.value,
+    faces: pickedEmojis.value.filter((i) => i.kind === 'face').map((i) => i.id ?? ''),
+    emojis: pickedEmojis.value
+      .filter((i) => i.kind !== 'face')
+      .map((i) => ({ kind: i.kind as 'fav' | 'custom', url: i.url, id: i.id })),
   })
 }
 
@@ -238,6 +254,7 @@ function reset() {
       text.value = ''
       clearImages()
       ats.value = []
+      clearPicked()
   }
 }
 
@@ -270,6 +287,202 @@ function onEnter(e: KeyboardEvent) {
   e.preventDefault()
   submit()
 }
+
+/* ---------------- 表情 ---------------- */
+
+interface FaceItem {
+  id: string
+  name: string
+  /** unicode emoji 没有图片，点了直接插进正文 */
+  text?: string
+}
+
+interface FaceGroup {
+  name: string
+  items: FaceItem[]
+}
+
+type EmojiTab = 'recent' | 'qq' | 'fav' | 'custom'
+
+const EMOJI_TABS: Array<{ key: EmojiTab; label: string }> = [
+  { key: 'recent', label: '最近' },
+  { key: 'qq', label: 'QQ表情' },
+  { key: 'fav', label: '收藏' },
+  { key: 'custom', label: '自定义' },
+]
+
+const RECENT_KEY = 'guoba.chat.recent-emoji'
+const MAX_RECENT = 24
+/** 一次最多带几个表情，跟后端 MAX_SEND_EMOJIS 对齐 */
+const MAX_PICKED = 20
+
+const emojiOpen = ref(false)
+const emojiTab = ref<EmojiTab>('recent')
+/** QQ 自带的表情清单，首次打开面板时从静态资源里取 */
+const faceGroups = ref<FaceGroup[]>([])
+const emojiLoading = ref(false)
+const favorites = ref<string[]>([])
+const favoritesError = ref('')
+const customEmojis = ref<ChatCustomEmoji[]>([])
+/** 已选、待随本条消息发出去的表情 */
+const pickedEmojis = ref<ChatEmojiPick[]>([])
+/** 最近用过的，存 localStorage，跨会话共用一份 */
+const recentEmojis = ref<ChatEmojiPick[]>([])
+
+const emojiFileEl = ref<HTMLInputElement | null>(null)
+const emojiPanelEl = ref<HTMLElement | null>(null)
+const emojiBtnEl = ref<HTMLElement | null>(null)
+
+function faceSrc(id: string) {
+  return withMountPrefix(`/faces/${id}.png`)
+}
+
+function customSrc(id: string) {
+  return chatEmojiUrl(id, props.emojiTicket)
+}
+
+/** 待发表情的缩略图地址，三类来源各走各的 */
+function pickSrc(item: ChatEmojiPick) {
+  if (item.kind === 'face') return faceSrc(item.id ?? '')
+  if (item.kind === 'custom') return customSrc(item.id ?? '')
+  return item.url ?? ''
+}
+
+function pickKey(item: ChatEmojiPick) {
+  return `${item.kind}:${item.id ?? item.url ?? ''}`
+}
+
+function loadRecent() {
+  try {
+    const list = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]')
+    recentEmojis.value = Array.isArray(list)
+      ? list.filter((i) => i && ['face', 'fav', 'custom'].includes(i.kind)).slice(0, MAX_RECENT)
+      : []
+  } catch {
+    recentEmojis.value = []
+  }
+}
+
+function remember(item: ChatEmojiPick) {
+  const list = recentEmojis.value.filter((i) => pickKey(i) !== pickKey(item))
+  list.unshift({ ...item })
+  recentEmojis.value = list.slice(0, MAX_RECENT)
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recentEmojis.value))
+  } catch {
+    // 隐私模式下写不了盘，最近表情只在本次会话里有效
+  }
+}
+
+async function loadFaces() {
+  if (faceGroups.value.length) return
+  try {
+    const res = await fetch(withMountPrefix('/faces/manifest.json'))
+    if (!res.ok) return
+    const data = await res.json()
+    faceGroups.value = Array.isArray(data?.groups) ? data.groups : []
+  } catch {
+    // 静态资源取不到时，面板里只剩收藏与自定义两档
+  }
+}
+
+async function loadEmojiData(refresh = false) {
+  if (!props.botId) return
+  emojiLoading.value = true
+  try {
+    const data = await apiChatEmoji({ botId: props.botId, refresh })
+    favorites.value = data?.favorites ?? []
+    favoritesError.value = data?.favoritesError ?? ''
+    customEmojis.value = data?.custom ?? []
+  } catch (e: any) {
+    favoritesError.value = e?.message ?? '表情数据加载失败'
+  } finally {
+    emojiLoading.value = false
+  }
+}
+
+function toggleEmoji() {
+  emojiOpen.value = !emojiOpen.value
+  if (!emojiOpen.value) return
+  loadFaces()
+  loadEmojiData()
+}
+
+function closeEmoji() {
+  emojiOpen.value = false
+}
+
+/** 点面板和按钮以外的地方收起来，跟 QQ 的行为一致 */
+function onDocPointerDown(e: MouseEvent) {
+  if (!emojiOpen.value) return
+  const target = e.target as Node | null
+  if (!target) return
+  if (emojiPanelEl.value?.contains(target) || emojiBtnEl.value?.contains(target)) return
+  emojiOpen.value = false
+}
+
+/**
+ * QQ 表情点一下：有图（小黄脸 / 超级表情）就攒成待发表情，没图的是 unicode emoji，
+ * 直接补进正文 —— 发 face 段反而不认。
+ */
+function pickFace(item: FaceItem) {
+  if (item.text) {
+    text.value += item.id
+    nextTick(() => inputEl.value?.focus())
+    return
+  }
+  pickEmoji({ kind: 'face', id: item.id, name: item.name })
+}
+
+function pickEmoji(item: ChatEmojiPick) {
+  if (pickedEmojis.value.length >= MAX_PICKED) {
+    message.warning(`一次最多带 ${MAX_PICKED} 个表情`)
+    return
+  }
+  pickedEmojis.value.push({ ...item })
+  remember(item)
+}
+
+function clearPicked() {
+  pickedEmojis.value = []
+}
+
+async function onEmojiFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (!files.length) return
+  const fd = new FormData()
+  for (const file of files.slice(0, 20)) fd.append('files', file)
+  try {
+    const data = await apiChatEmojiUpload(fd)
+    customEmojis.value = data?.custom ?? []
+    if (data?.added?.length) message.success(`已添加 ${data.added.length} 张表情`)
+    else message.info('这些表情已经添加过了')
+  } catch {
+    // 请求层已经弹过错误
+  }
+}
+
+async function removeCustomEmoji(item: ChatCustomEmoji, e: Event) {
+  e.stopPropagation()
+  try {
+    const data = await apiChatEmojiRemove(item.id)
+    customEmojis.value = data?.custom ?? []
+    pickedEmojis.value = pickedEmojis.value.filter((i) => !(i.kind === 'custom' && i.id === item.id))
+  } catch {
+    // 请求层已经弹过错误
+  }
+}
+
+onMounted(() => {
+  loadRecent()
+  document.addEventListener('mousedown', onDocPointerDown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocPointerDown)
+})
 
 /* ---------------- 图片 ---------------- */
 
@@ -431,6 +644,16 @@ defineExpose({
       <span v-if="qqbot" class="g-cin-at-tip">带 @ 的消息会按 MD 发送</span>
     </div>
 
+    <!-- 已选的表情，跟图片一样排在输入框上方，发送时按顺序拼进消息 -->
+    <div v-if="mode === 'normal' && pickedEmojis.length" class="g-cin-emojis">
+      <div v-for="(item, i) in pickedEmojis" :key="`${pickKey(item)}-${i}`" class="g-cin-emoji">
+        <img :src="pickSrc(item)" :alt="item.name ?? '表情'" />
+        <span class="g-cin-emoji-del" @click="pickedEmojis.splice(i, 1)">
+          <GIcon icon="ant-design:close-outlined" :size="9" />
+        </span>
+      </div>
+    </div>
+
     <div v-if="mode === 'normal' && images.length" class="g-cin-imgs">
       <div v-for="(img, i) in images" :key="img.url" class="g-cin-img">
         <img :src="img.url" alt="" />
@@ -535,6 +758,18 @@ defineExpose({
         <GIcon icon="ant-design:picture-outlined" :size="17" />
       </button>
       <input ref="fileEl" type="file" accept="image/*" multiple hidden @change="onFileChange" />
+      <button
+        v-if="mode === 'normal'"
+        ref="emojiBtnEl"
+        type="button"
+        class="g-cin-imgbtn"
+        :class="{ 'is-on': emojiOpen }"
+        :disabled="disabled"
+        title="表情"
+        @click="toggleEmoji"
+      >
+        <GIcon icon="😊" :size="16" />
+      </button>
       <span class="g-cin-gap" />
       <button
         type="button"
@@ -547,11 +782,132 @@ defineExpose({
         <GIcon icon="ant-design:send-outlined" :size="17" />
       </button>
     </div>
+
+    <!-- 表情面板：QQ 自带 / 收藏 / 自定义三档，浮在输入区上方 -->
+    <div v-if="emojiOpen" ref="emojiPanelEl" class="g-emoji">
+      <div class="g-emoji-head">
+        <button
+          v-for="tab in EMOJI_TABS"
+          :key="tab.key"
+          type="button"
+          class="g-emoji-tab"
+          :class="{ 'is-on': emojiTab === tab.key }"
+          @click="emojiTab = tab.key"
+        >
+          {{ tab.label }}
+        </button>
+        <span class="g-cin-gap" />
+        <button
+          v-if="emojiTab === 'fav'"
+          type="button"
+          class="g-emoji-act"
+          :disabled="emojiLoading"
+          @click="loadEmojiData(true)"
+        >
+          刷新
+        </button>
+        <button
+          v-if="emojiTab === 'custom'"
+          type="button"
+          class="g-emoji-act"
+          @click="emojiFileEl?.click()"
+        >
+          添加
+        </button>
+        <button type="button" class="g-emoji-close" title="关闭" @click="closeEmoji">
+          <GIcon icon="ant-design:close-outlined" :size="12" />
+        </button>
+      </div>
+
+      <div class="g-emoji-body">
+        <!-- 最近 -->
+        <template v-if="emojiTab === 'recent'">
+          <div v-if="!recentEmojis.length" class="g-emoji-empty">还没有用过的表情</div>
+          <div v-else class="g-emoji-grid">
+            <button
+              v-for="item in recentEmojis"
+              :key="pickKey(item)"
+              type="button"
+              class="g-emoji-cell"
+              :title="item.name ?? ''"
+              @click="pickEmoji(item)"
+            >
+              <img :src="pickSrc(item)" alt="" loading="lazy" />
+            </button>
+          </div>
+        </template>
+
+        <!-- QQ 自带的表情，按 QQ 的分组排 -->
+        <template v-else-if="emojiTab === 'qq'">
+          <div v-if="!faceGroups.length" class="g-emoji-empty">表情图加载中…</div>
+          <div v-for="group in faceGroups" :key="group.name" class="g-emoji-group">
+            <div class="g-emoji-title">{{ group.name }}</div>
+            <div class="g-emoji-grid">
+              <button
+                v-for="item in group.items"
+                :key="item.id"
+                type="button"
+                class="g-emoji-cell"
+                :class="{ 'is-char': item.text }"
+                :title="item.name"
+                @click="pickFace(item)"
+              >
+                <span v-if="item.text" class="g-emoji-char">{{ item.id }}</span>
+                <img v-else :src="faceSrc(item.id)" alt="" loading="lazy" />
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- 收藏：直接问适配器要，地址由 QQ 服务端给 -->
+        <template v-else-if="emojiTab === 'fav'">
+          <div v-if="favoritesError" class="g-emoji-empty">{{ favoritesError }}</div>
+          <div v-else-if="emojiLoading && !favorites.length" class="g-emoji-empty">正在读取收藏表情…</div>
+          <div v-else-if="!favorites.length" class="g-emoji-empty">
+            这个号还没有收藏表情，去 QQ 里收藏几张再来刷新
+          </div>
+          <div v-else class="g-emoji-grid">
+            <button
+              v-for="url in favorites"
+              :key="url"
+              type="button"
+              class="g-emoji-cell"
+              @click="pickEmoji({ kind: 'fav', url })"
+            >
+              <img :src="url" alt="" loading="lazy" />
+            </button>
+          </div>
+        </template>
+
+        <!-- 自定义：自己传的图，存在 Bot 的 data 目录里 -->
+        <template v-else>
+          <div class="g-emoji-grid">
+            <button
+              v-for="item in customEmojis"
+              :key="item.id"
+              type="button"
+              class="g-emoji-cell"
+              @click="pickEmoji({ kind: 'custom', id: item.id })"
+            >
+              <img :src="customSrc(item.id)" alt="" loading="lazy" />
+              <span class="g-emoji-del" title="删除" @click="removeCustomEmoji(item, $event)">
+                <GIcon icon="ant-design:close-outlined" :size="9" />
+              </span>
+            </button>
+            <button type="button" class="g-emoji-cell g-emoji-add" @click="emojiFileEl?.click()">
+              <GIcon icon="ant-design:plus-outlined" :size="17" />
+            </button>
+          </div>
+        </template>
+      </div>
+      <input ref="emojiFileEl" type="file" accept="image/*" multiple hidden @change="onEmojiFileChange" />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .g-cin {
+  position: relative;
   border-top: 1px solid var(--g-border);
   padding: 8px 10px 8px;
 }
@@ -904,5 +1260,234 @@ defineExpose({
   50% {
     opacity: 0.5;
   }
+}
+
+/* ---------------- 表情 ---------------- */
+
+/* 已选的表情，尺寸比待发图片小一号，免得一条里挤了一排图太占地方 */
+.g-cin-emojis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.g-cin-emoji {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--g-border);
+  border-radius: 8px;
+  background: var(--g-bg-soft);
+}
+
+.g-cin-emoji img {
+  max-width: 42px;
+  max-height: 42px;
+  object-fit: contain;
+}
+
+.g-cin-emoji-del {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--g-bg-elevated);
+  border: 1px solid var(--g-border);
+  color: var(--g-text-sub);
+  cursor: pointer;
+}
+
+.g-cin-emoji-del:hover {
+  color: var(--g-danger);
+  border-color: var(--g-danger);
+}
+
+/* 面板浮在输入区上方，点面板外收起 */
+.g-emoji {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% - 2px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
+  border: 1px solid var(--g-border);
+  border-radius: 10px;
+  background: var(--g-bg-elevated);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.g-emoji-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--g-border);
+}
+
+.g-emoji-tab {
+  padding: 3px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--g-text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.g-emoji-tab:hover {
+  color: var(--g-text-sub);
+}
+
+.g-emoji-tab.is-on {
+  background: var(--g-brand-soft);
+  color: var(--g-brand);
+}
+
+.g-emoji-act {
+  padding: 2px 8px;
+  border: 1px solid var(--g-border);
+  border-radius: 6px;
+  background: none;
+  color: var(--g-text-sub);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.g-emoji-act:hover:not(:disabled) {
+  color: var(--g-brand);
+  border-color: var(--g-brand);
+}
+
+.g-emoji-act:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.g-emoji-close {
+  display: inline-flex;
+  padding: 3px;
+  border: none;
+  background: none;
+  color: var(--g-text-dim);
+  cursor: pointer;
+}
+
+.g-emoji-close:hover {
+  color: var(--g-danger);
+}
+
+.g-emoji-body {
+  max-height: min(400px, 55vh);
+  padding: 6px 8px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.g-emoji-group + .g-emoji-group {
+  margin-top: 4px;
+}
+
+.g-emoji-title {
+  position: sticky;
+  top: -6px;
+  z-index: 1;
+  padding: 4px 2px;
+  background: var(--g-bg-elevated);
+  color: var(--g-text-dim);
+  font-size: 11px;
+}
+
+.g-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  gap: 5px;
+}
+
+.g-emoji-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+
+.g-emoji-cell:hover {
+  background: var(--g-bg-soft);
+  border-color: var(--g-border);
+}
+
+.g-emoji-cell img {
+  max-width: 42px;
+  max-height: 42px;
+  object-fit: contain;
+}
+
+.g-emoji-char {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.g-emoji-del {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--g-bg-elevated);
+  border: 1px solid var(--g-border);
+  color: var(--g-text-sub);
+}
+
+.g-emoji-cell:hover .g-emoji-del {
+  display: flex;
+}
+
+.g-emoji-del:hover {
+  color: var(--g-danger);
+  border-color: var(--g-danger);
+}
+
+.g-emoji-add {
+  border: 1px dashed var(--g-border);
+  color: var(--g-text-dim);
+}
+
+.g-emoji-add:hover {
+  color: var(--g-brand);
+  border-color: var(--g-brand);
+}
+
+.g-emoji-empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--g-text-dim);
+  font-size: 12px;
+}
+
+.g-cin-imgbtn.is-on {
+  background: var(--g-brand-soft);
+  color: var(--g-brand);
 }
 </style>

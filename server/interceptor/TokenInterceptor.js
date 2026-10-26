@@ -48,6 +48,8 @@ const queryTokenAllow = [
 const ticketAllow = [
   [new RegExp('^/api/backup/download$'), 'backup'],
   [new RegExp('^/api/chat/asset/[^/]+$'), 'chat'],
+  // 自定义表情也是 <img src> 直连（表情面板），跟聊天图片同一套票据
+  [new RegExp('^/api/chat/emoji/custom/[^/]+$'), 'chat'],
   [new RegExp('^/api/chat/proxy$'), 'chat'],
   // 文件下载/预览以前把正式令牌和二级密码凭证一起塞进 URL，泄漏一次等于「登录+解锁」，
   // 同样换成短期票据
