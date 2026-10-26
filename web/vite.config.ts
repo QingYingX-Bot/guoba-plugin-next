@@ -9,8 +9,20 @@ import vue from '@vitejs/plugin-vue'
  */
 const REAL_MOUNT_PREFIX = '/guoba-plugin-mock-root'
 
+const BUILD_TIME = new Date().toLocaleString('zh-CN', {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
 export default defineConfig({
   base: `${REAL_MOUNT_PREFIX}/`,
+  // 侧栏显示构建时间，更新后一眼能看出浏览器是不是拿到了新版
+  define: {
+    __BUILD_TIME__: JSON.stringify(BUILD_TIME),
+  },
   plugins: [vue()],
   resolve: {
     alias: {

@@ -18,6 +18,8 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* 手机上点按钮不要闪一块蓝色高亮 */
+  -webkit-tap-highlight-color: transparent;
   /* index.html 里为了防白屏内联了深色底，样式加载后交还给主题变量 */
   background: var(--g-bg);
 }
@@ -197,17 +199,166 @@ code,
   padding: 20px;
 }
 
+/* ---------------- Segmented ---------------- */
+
+/**
+ * 分段控件。
+ *
+ * antd 默认给外层一块比卡片更暗的底槽（深色主题下是 #0d1017），在当前这套
+ * 深灰卡片上像一块凹陷的框，五个选项挤在里面很闷。这里把底槽去掉，
+ * 只留选中项一块品牌色淡底，视觉上轻一档。
+ */
+.ant-segmented {
+  background: transparent;
+  /* 选项多时允许横滑，但别露出滚动条 */
+  scrollbar-width: none;
+}
+
+.ant-segmented::-webkit-scrollbar {
+  display: none;
+}
+
+.ant-segmented .ant-segmented-item {
+  color: var(--g-text-sub);
+}
+
+/**
+ * 点击瞬间 antd 会在选项后面铺一层伪元素底，切换途中旧底还没走、新底已经铺上，
+ * 深色主题上就是一块跟着飘的灰影。这里把伪元素背景一律清掉，
+ * 选中态只由 item 自己的背景表达，切换瞬间完成，没有中间帧。
+ */
+.ant-segmented .ant-segmented-item::after,
+.ant-segmented .ant-segmented-item::before {
+  background: transparent !important;
+  transition: none !important;
+}
+
+.ant-segmented .ant-segmented-item,
+.ant-segmented .ant-segmented-item-label {
+  transition: none !important;
+}
+
+/* 悬停反馈只给真正有指针的设备，触屏上点完不会粘着一块底色 */
+@media (hover: hover) {
+  .ant-segmented .ant-segmented-item:hover:not(:has(.ant-segmented-item-input:checked)) {
+    background: var(--g-bg-soft);
+  }
+}
+
+.ant-segmented .ant-segmented-item-selected {
+  /* antd 的选中底色是运行时注入的，同特异性下会盖在我们的样式后面，
+     这里抬到 !important，保证任何时候都是品牌色那一块 */
+  background: var(--g-brand-soft) !important;
+  color: var(--g-brand) !important;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+/**
+ * antd 要等滑块动画播完才给选中项加 selected 类，中间有 200ms 空档：
+ * 文字先变白、底色还没出现，看起来像「点空了」。直接盯 input 的选中状态，
+ * 点击瞬间就能上色，不依赖那套动画。
+ */
+.ant-segmented .ant-segmented-item:has(.ant-segmented-item-input:checked) {
+  background: var(--g-brand-soft);
+  color: var(--g-brand);
+  font-weight: 500;
+}
+
+/**
+ * 切换时 antd 会插一块「滑块」从旧位置滑到新位置，它盖在文字上面，
+ * 在深色底上看起来就是一团跟着跑的灰影。这里直接不要滑块，
+ * 选中态由 item-selected 的背景立刻切换，干净利落。
+ */
+.ant-segmented .ant-segmented-group > .ant-segmented-thumb,
+.ant-segmented-thumb-motion,
+.ant-segmented-thumb-motion-appear,
+.ant-segmented-thumb-motion-enter {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+
+.ant-segmented .ant-segmented-item-label {
+  min-height: 28px;
+  padding: 0 10px;
+  line-height: 28px;
+}
+
+/* ---------------- 空状态 ---------------- */
+
+/**
+ * antd 默认那套灰白插画在深色主题上像一块发亮的贴纸，比内容还抢眼。
+ * 压到四成，保留形状但不抢视线。
+ */
+.ant-empty .ant-empty-image {
+  opacity: 0.4;
+}
+
 /* ---------------- 窄屏适配 ---------------- */
 
 @media (max-width: 768px) {
   .g-page {
     padding: 12px;
+    /* 手指滑到最底时别被 home 条压住按钮 */
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
 
+  /* iOS Safari 会把字号小于 16px 的输入框聚焦时把整页放大，松手还缩不回去 */
+  input,
+  textarea,
+  select,
+  .ant-input {
+    font-size: 16px !important;
+  }
+
+  /* antd 的小按钮只有 24px 高，手指点不准；统一抬到 32px */
+  .ant-btn-sm {
+    min-height: 32px;
+    padding-inline: 10px;
+  }
+
+  /* 表格行距放宽一点，避免误触相邻行 */
+  .ant-table-wrapper .ant-table-thead > tr > th,
+  .ant-table-wrapper .ant-table-tbody > tr > td {
+    padding: 10px 8px;
+  }
+
+  /* 卡片内边距从 24 收到 16：手机上左右各多出 8px 给内容 */
+  .ant-card > .ant-card-body {
+    padding: 16px;
+  }
+
+  .ant-card > .ant-card-head {
+    min-height: 44px;
+    padding: 0 16px;
+  }
+
+  /* 标题和右侧说明一行放不下时（比如字号调大了），让说明换到下一行，别被裁成「立…」 */
+  .ant-card-head-wrapper {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding: 6px 0;
+  }
+
+  .ant-card-head-title {
+    flex: 1 1 auto;
+  }
+
+  .ant-card-extra {
+    flex: 0 0 100%;
+    margin-inline-start: 0;
+  }
+
+  /* 分段控件收紧一档，插件管理那 5 个筛选在 360px 屏上也能一行放下，不用横滑 */
+  .ant-segmented .ant-segmented-item-label {
+    padding: 0 8px;
+    font-size: 13px;
+  }
+
+  /* 手机版顶栏已经显示当前页名，页面里再写一遍白占一行 —— 小屏一屏很贵 */
   .g-page-title {
-    font-size: 17px;
-    /* 说明文案原本兼作标题与正文之间的间距，藏掉之后由标题自己补上 */
-    margin-bottom: 12px;
+    display: none;
   }
 
   /* 手机屏幕就那么点，顶部这几行说明能占掉小半屏、把正文顶到看不见的地方，
@@ -227,14 +378,76 @@ code,
     margin: 8px auto;
   }
 
-  /* 宽表格改为横向滚动，避免整页被撑开 */
-  .ant-table-wrapper {
+  /* 手机版整页只上下滚：横向溢出交给各页自己的表格 / 工具栏内部滚。
+     否则手指一横拖整页跟着跑，顶栏和内容错位，最右一列还永远够不着 */
+  .g-layout.is-mobile .g-content {
+    overflow-x: hidden;
+  }
+
+  /* 宽表格在表格自己身上横滚，不要压列 —— 压了以后 QQ 号这类会被裁成半截 */
+  .ant-table-wrapper .ant-table-container {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /**
+   * 手机上强制桌面版时，不要让表格自己滚。
+   *
+   * 插件管理那种整页横滚主人用着没问题，表格内部滚动却怎么都滑不动 ——
+   * 统一成同一种手势：表格撑开内容区，由 .g-content 整页横向滚动。
+   */
+  .g-layout:not(.is-mobile) .ant-table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
+  }
+
+  .g-layout:not(.is-mobile) .g-content {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
+  }
+
+  /* 手机上强制桌面版时，工具栏按钮允许换行：一行塞不下就排第二行，别横着溢出 */
+  .g-layout:not(.is-mobile) .g-toolbar,
+  .g-layout:not(.is-mobile) .g-toolbar-filter,
+  .g-layout:not(.is-mobile) .g-toolbar-actions,
+  .g-layout:not(.is-mobile) .g-files-acts {
+    flex-wrap: wrap;
+  }
+
+  .g-layout:not(.is-mobile) .g-toolbar-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .g-layout:not(.is-mobile) .g-toolbar-actions > * {
+    flex: 1 1 auto;
+  }
+
+  .ant-table-wrapper .ant-table-content > table,
+  .ant-table-wrapper .ant-table-body > table {
+    min-width: 100%;
+    width: max-content;
   }
 
   /* 抽屉在窄屏几乎全屏 */
   .ant-drawer-content-wrapper {
     max-width: 100vw;
+  }
+
+  /* 手机版主内容区：避开 home 条，滚动别把整页带着弹 */
+  .g-layout.is-mobile .g-content {
+    padding-bottom: env(safe-area-inset-bottom);
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 窄屏上带位移的切换动画会跟手势滚动打架，只留淡入淡出 */
+  .g-layout.is-mobile .g-fade-enter-from {
+    transform: none;
   }
 }
 
@@ -246,6 +459,8 @@ code,
 }
 
 .g-page-desc {
+  /* 宽屏上一行拉满 1400px 读起来很累，超过这个宽度就不再加长了 */
+  max-width: 1100px;
   margin: 0 0 20px;
   font-size: 13px;
   color: var(--g-text-sub);
@@ -413,6 +628,186 @@ html[data-theme-id='glass'] body .g-content {
 html[data-theme-id='glass'] body .ant-card {
   background: var(--g-glass-card);
   backdrop-filter: blur(14px) saturate(1.3);
+}
+
+/**
+ * 自定义卡片也要跟着毛玻璃走。
+ *
+ * 文件管理、账号管理的手机卡片是普通 div（不是 antd Card），
+ * 只写 .ant-card 的话它们会一直是实底，跟旁边的玻璃卡对不上。
+ */
+html[data-theme-id='glass'] body .g-files-card,
+html[data-theme-id='glass'] body .g-acc-card,
+html[data-theme-id='glass'] body .g-files-mbtn {
+  background: var(--g-glass-card);
+  backdrop-filter: blur(14px) saturate(1.3);
+}
+
+/**
+ * 毛玻璃主题下表格不再是一块白板。
+ *
+ * antd Table 的底色是 colorBgContainer（浅色下是纯白），整张表铺在背景图上
+ * 比卡片还抢眼。这里把表体和表头都改成半透明，行 hover 也跟着透，
+ * 表格就能和周围那层玻璃融在一起。
+ */
+html[data-theme-id='glass'] body .ant-table {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+html[data-theme-id='glass'] body .ant-table-thead > tr > th.ant-table-cell {
+  background: rgba(255, 255, 255, 0.34) !important;
+}
+
+/* 浅色亮背景上，单靠白色玻璃托不住表格，补一圈轮廓和淡阴影 */
+html[data-theme-id='glass'][data-theme='light'] body .ant-table-wrapper {
+  border-radius: var(--g-radius-lg);
+  box-shadow: 0 6px 22px rgba(74, 68, 54, 0.1);
+}
+
+html[data-theme-id='glass'][data-theme='light'] body .ant-table-container {
+  border-radius: var(--g-radius-lg);
+  overflow: hidden;
+}
+
+/**
+ * 表格单元格不要背景过渡。
+ *
+ * antd 给 td 挂了 `transition: background 0.3s`：鼠标划过去时高亮要 0.3 秒才铺满、
+ * 再 0.3 秒才褪干净，快速拖动会看到一串色块追着鼠标跑，手感很「拖」。
+ * 这里全局关掉（不分主题），hover 立刻进立刻出。
+ */
+.ant-table-tbody > tr > td,
+.ant-table-tbody > tr > td.ant-table-cell-row-hover {
+  transition: none !important;
+}
+
+/**
+ * 表格行的悬浮反馈。
+ *
+ * antd 的行高亮有两条路：CSS 的 `tr:hover > td`（浏览器实时匹配，只会是一行），
+ * 和 JS 在鼠标移动时给 td 加的 `ant-table-cell-row-hover` 类（事件比鼠标慢，拖动时
+ * 会同时留在好几行上 —— 就是之前那几个追着跑的色块）。
+ * 所以 JS 那条保持透明，只让实时的 :hover 出效果：底色 + 上下细线，把这一行托起来。
+ */
+html[data-theme-id='glass'] body .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+  background: transparent !important;
+}
+
+/** 悬浮只给很淡的一层，快速划过时残留也看不出来 */
+html[data-theme-id='glass'] body .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: rgba(255, 255, 255, 0.16) !important;
+}
+
+html[data-theme-id='glass'][data-theme='dark'] body .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/**
+ * 多选时选中行不铺整行底色。
+ *
+ * 几十行一起亮就是一条条色带，鼠标快速划过再叠几行更明显 ——
+ * 选中状态交给勾选框表达就够了。
+ */
+html[data-theme-id='glass'] body .ant-table-tbody > tr.ant-table-row-selected > td,
+html[data-theme-id='glass'] body .ant-table-tbody > tr.ant-table-row-selected:hover > td {
+  background: transparent !important;
+}
+
+html[data-theme-id='glass'][data-theme='dark'] body .ant-table {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+html[data-theme-id='glass'][data-theme='dark'] body .ant-table-thead > tr > th.ant-table-cell {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* 吸底操作条浮在内容之上，用更浓一档的表面色，避免透出下面的文字 */
+html[data-theme-id='glass'] body .g-files-bulk.is-fixed,
+html[data-theme-id='glass'] body .g-files-bulk {
+  background: var(--g-glass-surface);
+  backdrop-filter: blur(14px) saturate(1.3);
+}
+
+/**
+ * 消息记录、运行日志、沙盒、数据浏览：这几个页面的主面板都是自定义 div，
+ * 底色写死成实色。统一换成玻璃面，跟侧栏和卡片对齐。
+ */
+html[data-theme-id='glass'] body .g-chat-side,
+html[data-theme-id='glass'] body .g-chat-main,
+html[data-theme-id='glass'] body .g-cmsg-bubble,
+html[data-theme-id='glass'] body .g-log-box,
+html[data-theme-id='glass'] body .g-sandbox-box,
+html[data-theme-id='glass'] body .g-sandbox-input,
+html[data-theme-id='glass'] body .g-msg-bubble,
+html[data-theme-id='glass'] body .g-list,
+html[data-theme-id='glass'] body .g-detail,
+html[data-theme-id='glass'] body .g-tables,
+html[data-theme-id='glass'] body .g-rows {
+  background: var(--g-glass-card);
+  backdrop-filter: blur(14px) saturate(1.3);
+}
+
+/* 卡片里的图标底片也换成半透明，否则玻璃卡上嵌着一块实心方块 */
+html[data-theme-id='glass'] body .g-files-card .g-files-card-ico {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+html[data-theme-id='glass'][data-theme='light'] body .g-files-card .g-files-card-ico {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/**
+ * 毛玻璃主题下，按钮 / 输入框 / 标签别再铺纯白实底。
+ *
+ * antd 这些控件的底色是 colorBgContainer，浅色主题下就是一块纯白，
+ * 铺在背景图上像贴了一张张白纸，跟卡片半透明的质感对不上。
+ * 这里统一换成半透明白（深色主题反过来用半透明白光），颜色语义交给边框和文字。
+ */
+/**
+ * 默认按钮 / 标签：透明底 + 描边。
+ *
+ * 原先挂在 html[data-theme-id='glass'] 下，但线上实测有人页面上的主题属性
+ * 匹配不上，规则整条失效、按钮还是白底。这里不再依赖主题属性，全局生效 ——
+ * 半透明白叠在亮背景上本来也还是白，直接透明反而更干净。
+ */
+/**
+ * 按钮统一去掉阴影。
+ *
+ * antd 给按钮挂了一层 2px 的下阴影（default 是 4% 白、primary 是主色加深），
+ * 在玻璃卡片上会形成一圈「白描边」的错觉，红色主色下最扎眼。全部压平。
+ */
+.ant-btn {
+  box-shadow: none !important;
+}
+
+.ant-btn-default {
+  /* 默认按钮改成实心主题色，和 primary 一致，不再有白底 */
+  background: var(--g-brand) !important;
+  border-color: var(--g-brand) !important;
+  color: #fff !important;
+}
+
+html[data-theme-id='glass'] body .ant-input,
+html[data-theme-id='glass'] body .ant-input-affix-wrapper,
+html[data-theme-id='glass'] body .ant-select-selector {
+  background-color: rgba(255, 255, 255, 0.45) !important;
+  border-color: var(--g-border) !important;
+}
+
+.ant-tag {
+  background: transparent !important;
+}
+
+
+
+html[data-theme-id='glass'][data-theme='dark'] body .ant-input,
+html[data-theme-id='glass'][data-theme='dark'] body .ant-input-affix-wrapper,
+html[data-theme-id='glass'][data-theme='dark'] body .ant-select-selector {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme='dark'] .ant-tag {
+  background: rgba(255, 255, 255, 0.06) !important;
 }
 
 html[data-theme-id='glass'] body .g-actions {

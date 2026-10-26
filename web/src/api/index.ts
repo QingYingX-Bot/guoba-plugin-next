@@ -1331,6 +1331,16 @@ export const apiFileRename = (body: { path: string; newName: string }) =>
 /** 删除（递归） */
 export const apiFileDelete = (path: string) => post<{ ok: boolean }>('/file/delete', { path })
 
+/**
+ * 批量删除。逐项删，单项失败不打断整单，
+ * 所以返回里既要有删掉的，也要有没删成的（path + 原因）。
+ */
+export const apiFileDeleteBatch = (paths: string[]) =>
+  post<{ deleted: string[]; failed: Array<{ path: string; message: string }> }>(
+    '/file/delete-batch',
+    { paths },
+  )
+
 /** 上传：FormData 带 path 字段 + 文件，走 multipart（同消息记录发图） */
 export const apiFileUpload = (fd: FormData) =>
   post<{ ok: boolean; saved: string[] }>('/file/upload', fd)
@@ -1679,8 +1689,8 @@ export function backupDownloadUrl(file: string, ticket: string) {
   return `${API_BASE}/backup/download?${q.toString()}`
 }
 
-/** 申请媒体票据（scope：backup 只能下载备份，chat 只能读消息图片） */
-export const apiCreateMediaTicket = (scope: 'chat' | 'backup') =>
+/** 申请媒体票据（scope：backup 只能下载备份，chat 只能读消息图片，file 只能读写文件） */
+export const apiCreateMediaTicket = (scope: 'chat' | 'backup' | 'file') =>
   post<{ ticket: string; ttl: number }>('/media-ticket', { scope })
 
 export * from './miao'

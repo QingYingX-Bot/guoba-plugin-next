@@ -6,6 +6,7 @@ import {
   Col,
   Popconfirm,
   Row,
+  Segmented,
   Slider,
   Tag,
   Upload,
@@ -29,6 +30,17 @@ import { API_BASE } from '@/utils/env'
 
 const appStore = useAppStore()
 const auth = useAuthStore()
+
+/** 界面模式：auto 跟屏幕宽度，另外两项手动锁定，存在本地 */
+const VIEW_MODES = [
+  { label: '自动', value: 'auto' },
+  { label: '桌面版', value: 'pc' },
+  { label: '手机版', value: 'mobile' },
+]
+
+function onViewModeChange(value: string | number) {
+  appStore.setViewMode(value as 'auto' | 'mobile' | 'pc')
+}
 
 /**
  * 页面草稿。所有改动即时预览
@@ -157,6 +169,19 @@ onUnmounted(() => {
         面板整体外观配置。
       </p>
     </div>
+
+    <!-- 界面模式跟主题草稿无关，点了立刻生效，所以单独放、也不参与下面的保存 -->
+    <Card :bordered="false" title="界面模式" class="g-block">
+      <template #extra>
+        <span class="g-hint">立即生效，不用保存</span>
+      </template>
+      <Segmented :value="appStore.viewMode" :options="VIEW_MODES" @change="onViewModeChange" />
+      <p class="g-hint g-viewmode-hint">
+        「自动」跟随屏幕宽度：768px 及以下用手机版。手机版把侧边栏收进抽屉，
+        文件管理换成卡片列表，操作按钮放到手指够得着的位置。
+        手动选定后一直保持，改回「自动」即可恢复跟随屏幕。
+      </p>
+    </Card>
 
     <Row :gutter="[16, 16]">
       <Col :xs="24" :lg="12">
@@ -330,6 +355,10 @@ onUnmounted(() => {
 
 .g-block {
   margin-bottom: 16px;
+}
+
+.g-viewmode-hint {
+  margin: 10px 0 0;
 }
 
 /* ---------------- 内置主题 ---------------- */
@@ -628,6 +657,8 @@ onUnmounted(() => {
   .g-actions {
     margin: auto -12px 0;
     padding: 12px;
+    /* 吸底条落在 home 条上时按钮会被压住，留出安全区 */
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
 
   .g-dirty,

@@ -299,18 +299,21 @@ onBeforeUnmount(() => {
         <a-switch size="small" :checked="enabled" :loading="toggling" @change="onToggleEnabled" />
         终端
       </span>
-      <a-button size="small" :disabled="!enabled" @click="interrupt" title="中断当前前台进程，等价键盘 Ctrl+C">
-        <GIcon icon="ant-design:poweroff-outlined" :size="13" />
-        Ctrl+C
-      </a-button>
-      <a-button size="small" @click="clearScreen">
-        <GIcon icon="ant-design:clear-outlined" :size="13" />
-        清屏
-      </a-button>
-      <a-button size="small" :disabled="!enabled" @click="restart">
-        <GIcon icon="ant-design:reload-outlined" :size="13" />
-        重启
-      </a-button>
+      <!-- 包一层：手机上这三个按钮要整行平分，散着放会各自换行 -->
+      <div class="g-term-acts">
+        <a-button size="small" :disabled="!enabled" @click="interrupt" title="中断当前前台进程，等价键盘 Ctrl+C">
+          <GIcon icon="ant-design:poweroff-outlined" :size="13" />
+          Ctrl+C
+        </a-button>
+        <a-button size="small" @click="clearScreen">
+          <GIcon icon="ant-design:clear-outlined" :size="13" />
+          清屏
+        </a-button>
+        <a-button size="small" :disabled="!enabled" @click="restart">
+          <GIcon icon="ant-design:reload-outlined" :size="13" />
+          重启
+        </a-button>
+      </div>
     </div>
 
     <div v-if="!enabled" class="g-term-off">
@@ -508,5 +511,54 @@ onBeforeUnmount(() => {
 
 .g-term-field::placeholder {
   color: var(--g-text-dim);
+}
+
+.g-term-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 768px) {
+  /* 顶栏 50 + 页面上下留白 24，桌面那套 96 在手机上会多出一截空白 */
+  .g-term {
+    height: calc(100dvh - 74px);
+    min-height: 0;
+  }
+
+  /* 第一行：shell + 状态 + 开关 + 路径；第二行：三个按钮平分 */
+  .g-term-head {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    margin-bottom: 8px;
+  }
+
+  .g-term-switch {
+    order: 3;
+  }
+
+  .g-term-cwd {
+    order: 4;
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    /* 桌面用 rtl 是为了尾部省略，手机上路径短，ltr 才不会被显示成 root/JiuLi/ */
+    direction: ltr;
+    text-align: right;
+  }
+
+  .g-term-acts {
+    order: 5;
+    width: 100%;
+    gap: 6px;
+  }
+
+  .g-term-acts > * {
+    flex: 1;
+  }
+
+  .g-term-gap {
+    display: none;
+  }
 }
 </style>

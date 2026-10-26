@@ -39,6 +39,9 @@ async function hookAppPreloads(guobaApp, preload) {
       // 替换tag
       const tag = instance.createScriptTag()
       const content = fs.readFileSync(preload.staticPath, 'utf8').replace(reg, tag)
+      // 面板入口不缓存：更新后浏览器要能立刻拿到新 index.html，
+      // 里面引用的 assets 带 hash，会自然换成新文件
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
       res.send(content)
     } else if (req.path === instance.scriptSrc) {
       const content = await instance.getPreloadContent()

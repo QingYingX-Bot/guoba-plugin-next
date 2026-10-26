@@ -26,6 +26,7 @@ export class FileController extends ApiController {
     this.post('/create', this.create)
     this.post('/rename', this.rename)
     this.post('/delete', this.remove)
+    this.post('/delete-batch', this.removeBatch)
     this.post('/upload', this.upload)
     this.get('/download', this.download)
     this.get('/dir-size', this.dirSize)
@@ -70,6 +71,31 @@ export class FileController extends ApiController {
   async remove(req) {
     const {path: rel} = req.body ?? {}
     return Result.ok(this.fileService.remove(rel))
+  }
+
+  /**
+   * 批量删除。
+   *
+   * 逐项删、逐项记结果：一项不存在或被权限拦住时，不该把整单打断 ——
+   * 前端勾了 50 个，其中一个刚被别人删掉，剩下 49 个还是要删。
+   * 最后把失败项带回去，由页面告诉用户哪几个没删成。
+   */
+  async removeBatch(req) {
+    const {paths} = req.body ?? {}
+    if (!Array.isArray(paths) || !paths.length) {
+      return Result.ok({deleted: [], failed: []})
+    }
+    const deleted = []
+    const failed = []
+    for (const rel of paths) {
+      try {
+        this.fileService.remove(rel)
+        deleted.push(rel)
+      } catch (err) {
+        failed.push({path: String(rel ?? ''), message: err?.message ?? String(err)})
+      }
+    }
+    return Result.ok({deleted, failed})
   }
 
   /** 上传，multipart：path 字段 = 目标目录，文件在 req.files（multer 已处理） */
