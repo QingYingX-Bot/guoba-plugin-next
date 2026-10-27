@@ -8,6 +8,7 @@ import { setPortFrozen } from '../utils/freezePortGuard.js'
  *
  * 优先级高于 TokenInterceptor：面板被冻结后，连登录接口也一并拒绝，
  * 只有公开的冻结状态查询（给冻结页轮询用）和静态资源放行。
+ * 外网触发的冻结（scope=wan）只拦外网来源，局域网一切照常。
  */
 const EXCLUDE = [
   /^\/api\/frozen\/status$/,
@@ -41,8 +42,13 @@ export default class AccessFreezeInterceptor extends Interceptor {
       next()
       return
     }
-    // 进程内状态可能因热重载等原因落后于 redis，这里顺手对齐（只置 true，解除由 unfreeze 负责）
-    setPortFrozen(true)
+    // 进程内状态可能因热重载等原因落后于 redis，这里顺手对齐（只置冻结，解除由 unfreeze 负责）
+    setPortFrozen(info.scope === 'wan' ? 'wan' : 'all')
+    // 只关外网时局域网照常用；外网请求一般已被端口闸门断掉，走到这里的（如未配可信反代）也拦下
+    if (!this.accessFreezeService.isBlocked(info, req)) {
+      next()
+      return
+    }
     const message = '锅巴已冻结，请主人私聊机器人发送 #锅巴解冻 后再试'
     const body = new Result(Constant.FROZEN_CODE, {
       frozen: true,

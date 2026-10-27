@@ -19,12 +19,14 @@ export class FrozenController extends ApiController {
     this.get('/status', this.status)
   }
 
-  async status() {
+  async status(req) {
     const info = await this.accessFreezeService.getInfo()
+    // 只关外网时，局域网看到的就是「没冻结」，冻结页会自动跳回去
+    const blocked = this.accessFreezeService.isBlocked(info, req)
     return Result.ok({
-      frozen: !!info,
-      reason: info?.reason || '',
-      at: info?.at || 0,
+      frozen: blocked,
+      reason: blocked ? info?.reason || '' : '',
+      at: blocked ? info?.at || 0 : 0,
     })
   }
 }
