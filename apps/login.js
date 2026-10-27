@@ -118,6 +118,16 @@ export class GuobaLogin extends plugin {
     // 开外网等于把面板暴露到公网，权限必须和解冻一致：主人本人 + 私聊 + 指定安全接收人
     if (!this.e.isMaster || !this.e.isPrivate || !this.isSecurityMaster()) return false
     const open = /开启/.test(this.e.msg)
+    // 冻结时端口闸门对外网一律断开，开了 lanOnly 也进不来：直接提示先解冻，别假装开成功
+    if (open) {
+      let frozen = false
+      try {
+        frozen = !!(await this.freezeService.getInfo())
+      } catch {
+        // 读不到冻结状态就照常开
+      }
+      if (frozen) return this.reply('面板已冻结，请先私聊发送「#锅巴解冻」。')
+    }
     try {
       cfg.set('server.lanOnly', !open)
     } catch (err) {
