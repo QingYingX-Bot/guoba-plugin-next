@@ -5,7 +5,7 @@
  * 长驻 shell 会话（后端 TermService），轮询拉增量输出（同日志页范式）。
  * 命令在面板进程所在环境执行 —— 等同服务器 shell，能删文件、重启 Bot，页面顶部给了提示。
  */
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
 import { ansiStyle, parseAnsi, type AnsiSpan } from '@/utils/ansi'
@@ -72,6 +72,16 @@ let timer: number | undefined
 
 const boxEl = ref<HTMLElement | null>(null)
 const inputEl = ref<any>(null)
+
+/**
+ * 提示符结尾字符（# / $）。
+ * 完整提示符是 root@主机:/很/长/的/路径# 这种形态，手机上一行放不下、会把输入框压没，
+ * 窄屏就只渲染这个尾字符，完整路径看顶栏那行 cwd。
+ */
+const promptTail = computed(() => {
+  const p = String(status.value?.prompt || '$').trimEnd()
+  return p.slice(-1) || '$'
+})
 
 function isDangerous(cmd: string) {
   return DANGEROUS.some((r) => r.test(cmd))
@@ -337,8 +347,11 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="g-term-input">
-      <!-- 输入框前缀跟着提示符走：cd 之后这里立刻显示新路径 -->
-      <span class="g-term-prompt">{{ status?.prompt || '$ ' }}</span>
+      <!-- 提示符跟着 cwd 走；窄屏只留结尾字符，完整路径见顶栏 -->
+      <span class="g-term-prompt" :title="status?.prompt || ''">
+        <span class="p-full">{{ status?.prompt || '$ ' }}</span>
+        <span class="p-tail">{{ promptTail }}</span>
+      </span>
       <input
         ref="inputEl"
         v-model="input"
@@ -468,11 +481,21 @@ onBeforeUnmount(() => {
 }
 
 .g-term-prompt {
+  flex: 0 0 auto;
+  /* 长路径不限宽的话会把旁边的 input 挤成 0 宽，看着像「没法输入」 */
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   margin-right: 6px;
   color: var(--g-brand);
   /* 输出区整体是可选的（要能复制报错），提示符得单独排除，
      否则拖选一段命令粘出去全是 "$ " 打头 */
   user-select: none;
+}
+.g-term-prompt .p-tail {
+  display: none;
 }
 
 .g-term-empty {
@@ -545,6 +568,19 @@ onBeforeUnmount(() => {
     /* 桌面用 rtl 是为了尾部省略，手机上路径短，ltr 才不会被显示成 root/JiuLi/ */
     direction: ltr;
     text-align: right;
+  }
+
+  /* 手机上 root@主机:/长/路径# 能占满整行，输入框就没了；只留 # / $ 最省地方 */
+  .g-term-prompt {
+    max-width: none;
+  }
+
+  .g-term-prompt .p-full {
+    display: none;
+  }
+
+  .g-term-prompt .p-tail {
+    display: inline;
   }
 
   .g-term-acts {
