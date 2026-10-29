@@ -22,6 +22,8 @@ import {
   message,
 } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
+import AccountMobileList from './components/AccountMobileList.vue'
+import { useAppStore } from '@/stores/app'
 import { groupAvatar, userAvatar } from '@/utils/avatar'
 import {
   apiCancelBroadcast,
@@ -36,6 +38,8 @@ import {
   type BroadcastTask,
   type SandboxBot,
 } from '@/api'
+
+const appStore = useAppStore()
 
 /**
  * 行头像。地址后端按适配器算好放在 avatar 上（QQBot 是 openid，得配 appid 才拼得出来），
@@ -520,6 +524,7 @@ onMounted(async () => {
           </div>
 
           <Table
+            v-if="!appStore.isMobile"
             :columns="friendColumns"
             :data-source="friend.records"
             :row-key="(r: any) => r.user_id"
@@ -571,6 +576,25 @@ onMounted(async () => {
               </template>
             </template>
           </Table>
+
+          <!-- 手机：表格换成卡片，QQ 号和操作列不用再横着拖 -->
+          <AccountMobileList
+            v-if="appStore.isMobile"
+            kind="friend"
+            :records="friend.records"
+            :selected="friend.selected"
+            :total="friend.total"
+            :page-no="friend.pageNo"
+            :page-size="friend.pageSize"
+            @update:selected="(keys) => (friend.selected = keys)"
+            @danger="(record) => openDanger('friend', record)"
+            @page-change="
+              (p) => {
+                friend.pageNo = p
+                loadFriends()
+              }
+            "
+          />
         </TabPane>
 
         <TabPane key="group" :tab="`群聊（${group.total}）`">
@@ -603,6 +627,7 @@ onMounted(async () => {
           </div>
 
           <Table
+            v-if="!appStore.isMobile"
             :columns="groupColumns"
             :data-source="group.records"
             :row-key="(r: any) => r.group_id"
@@ -661,6 +686,24 @@ onMounted(async () => {
               </template>
             </template>
           </Table>
+
+          <AccountMobileList
+            v-if="appStore.isMobile"
+            kind="group"
+            :records="group.records"
+            :selected="group.selected"
+            :total="group.total"
+            :page-no="group.pageNo"
+            :page-size="group.pageSize"
+            @update:selected="(keys) => (group.selected = keys)"
+            @danger="(record) => openDanger('group', record)"
+            @page-change="
+              (p) => {
+                group.pageNo = p
+                loadGroups()
+              }
+            "
+          />
         </TabPane>
       </Tabs>
     </Card>
@@ -938,6 +981,35 @@ onMounted(async () => {
 
 .g-acc-search {
   max-width: 280px;
+}
+
+@media (max-width: 768px) {
+  /* 搜索框独占一行，搜索 / 刷新 / 群发 三个按钮平分第二行 */
+  .g-acc-bar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .g-acc-search {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+  }
+
+  /* 「已选 N」和群发原来套在同一个 div 里，拆开让群发按钮直接落进网格第三格 */
+  .g-acc-bar-right {
+    display: contents;
+  }
+
+  .g-acc-picked {
+    grid-column: 1 / 3;
+    align-self: center;
+  }
+
+  .g-acc-bot-select {
+    width: 100%;
+  }
 }
 
 .g-acc-cell {

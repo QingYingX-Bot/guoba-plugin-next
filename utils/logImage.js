@@ -48,7 +48,10 @@ let cachedRenderer
  * 续行（堆栈、裸 console.log 的后续行）没有自己的时间和级别，并进上一条里，
  * 一条日志就是一个条目 —— 否则堆栈会被拆成十几个只有正文的块。
  *
- * @param lines LogService.query 返回的行
+ * 返回的条目**新的在前**：QQ 里打开长图先看到的是顶部，最上面就该是触发前那一刻；
+ * 按时间正序排的话，日志稀疏时顶部是几分钟前的旧日志，看着像不是实时的。
+ *
+ * @param lines LogService.query 返回的行（时间正序）
  * @param maxItems 最多保留多少条（取最新的），传 0 表示不限
  */
 export function mergeLogLines(lines, maxItems = 50) {
@@ -67,8 +70,9 @@ export function mergeLogLines(lines, maxItems = 50) {
       message: text,
     })
   }
+  // 续行要按正序合并完才能翻转，否则堆栈会挂到下一条日志上
   const picked = maxItems > 0 ? items.slice(-maxItems) : items
-  return picked.map(clampItem)
+  return picked.reverse().map(clampItem)
 }
 
 /** 把过长的一条压到出图能承受的范围 */

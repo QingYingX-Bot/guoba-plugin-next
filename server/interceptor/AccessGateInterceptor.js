@@ -16,6 +16,8 @@ const PROTECTED = [
   /^\/api\/data(\/|$)/,
   /^\/api\/term(\/|$)/,
   /^\/api\/chat(\/|$)/,
+  // 媒体票据能换出备份下载 / 聊天图片，签发本身必须先过二级密码
+  /^\/api\/media-ticket(\/|$)/,
   // 账号管理：Bot 账号 / 好友群列表 / 广播
   /^\/api\/oicq(\/|$)/,
   // 登录安全：改登录密码、可信 IP / 设备都在这里
@@ -56,6 +58,11 @@ export default class AccessGateInterceptor extends Interceptor {
   accessGateService = autowired('accessGateService')
 
   async handler(req, res, next) {
+    // 媒体票据（备份下载 / 聊天图片）签发时已经验过二级密码，换票请求不再重复要求
+    if (req.authViaTicket) {
+      next()
+      return
+    }
     const path = this.#relativePath(req)
     if (!PROTECTED.some(reg => reg.test(path))) {
       next()

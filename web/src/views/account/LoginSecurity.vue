@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Button, Card, Empty, Form, FormItem, Input, Popconfirm, Select, Switch, Table, Tag, Tooltip, message } from 'ant-design-vue'
+import { Button, Card, Empty, Form, FormItem, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, message } from 'ant-design-vue'
 import {
+  apiAddTrustedIp,
   apiClearGatePassword,
   apiClearTrustedDevices,
   apiClearTrustedIps,
@@ -38,6 +39,28 @@ const hydrated = ref(false)
 const saving = ref(false)
 const security = ref<LoginSecurity>({ configured: false, username: '', trustedIps: [], trustedDevices: [] })
 const form = reactive({ username: '', currentPassword: '', password: '', confirmPassword: '' })
+
+/** 手动添加可信 IP */
+const addIpOpen = ref(false)
+const addingIp = ref(false)
+const addIpForm = reactive({ ip: '', note: '' })
+
+async function submitAddIp() {
+  const ip = addIpForm.ip.trim()
+  if (!ip) {
+    message.warning('请输入 IP 地址')
+    return
+  }
+  addingIp.value = true
+  try {
+    security.value = await apiAddTrustedIp(ip, addIpForm.note.trim())
+    addIpOpen.value = false
+    addIpForm.ip = ''
+    addIpForm.note = ''
+  } finally {
+    addingIp.value = false
+  }
+}
 
 /** 二级密码：是否已开启，以及开启/修改表单 */
 const gateConfigured = ref(false)
@@ -392,13 +415,14 @@ onMounted(load)
     <Card :bordered="false" class="g-sec-devs">
       <template #title>可信设备</template>
       <template #extra>
-        <Popconfirm title="确定清空全部可信设备？" @confirm="clearDevices">
+        <Popconfirm title="确定清空全部可信设备？这些设备会被立即退出登录" @confirm="clearDevices">
           <Button danger size="small" :disabled="!devices.length || loading">全部清空</Button>
         </Popconfirm>
       </template>
       <p class="g-sec-tip">
         登录成功后浏览器里会存一份长期凭证（90 天有效，每次登录自动换新），认的是设备而不是 IP
-        —— 手机流量的 IPv6 隔一会儿就换，有了它就不用反复输验证码。撤销后那台设备下次登录要重新验证。
+        —— 手机流量的 IPv6 隔一会儿就换，有了它就不用反复输验证码。撤销后那台设备会被立即退出登录，
+        下次登录要重新验证。
       </p>
       <p class="g-sec-tip">
         本机：{{ myFingerprint }}
@@ -432,7 +456,7 @@ onMounted(load)
             <span class="g-sec-ip">{{ record.ip ? displayIp(record.ip) : '—' }}</span>
           </template>
           <template v-else-if="column.key === 'action'">
-            <Popconfirm title="确定撤销这台设备？" @confirm="revokeDevice(record.id)">
+            <Popconfirm title="确定撤销这台设备？会立即退出它在用的登录" @confirm="revokeDevice(record.id)">
               <Button type="link" danger size="small">撤销</Button>
             </Popconfirm>
           </template>
@@ -451,7 +475,7 @@ onMounted(load)
               {{ timeAgo(item.lastAt) }} · {{ item.ip ? displayIp(item.ip) : '未记录 IP' }}
             </span>
           </div>
-          <Popconfirm title="确定撤销这台设备？" @confirm="revokeDevice(item.id)">
+          <Popconfirm title="确定撤销这台设备？会立即退出它在用的登录" @confirm="revokeDevice(item.id)">
             <Button type="link" danger size="small">撤销</Button>
           </Popconfirm>
         </li>
@@ -463,11 +487,17 @@ onMounted(load)
     <Card :bordered="false" class="g-sec-ips">
       <template #title>可信 IP</template>
       <template #extra>
-        <Popconfirm title="确定清空全部可信 IP？" @confirm="clearAll">
-          <Button danger size="small" :disabled="!security.trustedIps.length || loading">全部清空</Button>
-        </Popconfirm>
+        <Space :size="8">
+          <Button size="small" :disabled="loading" @click="addIpOpen = true">添加</Button>
+          <Popconfirm title="确定清空全部可信 IP？" @confirm="clearAll">
+            <Button danger size="small" :disabled="!security.trustedIps.length || loading">全部清空</Button>
+          </Popconfirm>
+        </Space>
       </template>
-      <p class="g-sec-tip">IP 通过验证码认证后自动加入，撤销后该 IP 下次登录将重新要求验证码（设备凭证有效时优先按设备放行）。</p>
+      <p class="g-sec-tip">
+        IP 通过验证码认证后自动加入，也可以在右上角手动添加；撤销后该 IP 下次登录要重新验证码。
+        要彻底拦住某台设备，请到上方「可信设备」撤销它 —— 设备凭证还在时，只删 IP 不影响它免密登录。
+      </p>
 
       <Table
         v-if="security.trustedIps.length"
@@ -510,6 +540,24 @@ onMounted(load)
       </ul>
 
       <Empty v-if="!security.trustedIps.length" description="暂无可信 IP" />
+
+      <Modal
+        v-model:open="addIpOpen"
+        title="添加可信 IP"
+        ok-text="添加"
+        cancel-text="取消"
+        :confirm-loading="addingIp"
+        @ok="submitAddIp"
+      >
+        <Form layout="vertical">
+          <FormItem label="IP 地址" extra="支持 IPv4 / IPv6，这个 IP 登录时不再要求验证码">
+            <Input v-model:value="addIpForm.ip" placeholder="例如 192.168.1.10 或 240e:3bb:654::1" allowClear />
+          </FormItem>
+          <FormItem label="备注" extra="可选，只用来辨认这条记录">
+            <Input v-model:value="addIpForm.note" placeholder="例如 家里的宽带" :maxlength="100" allowClear />
+          </FormItem>
+        </Form>
+      </Modal>
     </Card>
   </div>
 </template>

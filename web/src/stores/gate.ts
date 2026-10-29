@@ -20,14 +20,27 @@ export const useGateStore = defineStore('gate', () => {
   const lockSeconds = ref(0)
   /** 是否已经从服务端拿到过状态 */
   const checked = ref(false)
-  const gateToken = ref<string>(sessionStorage.getItem(GATE_TOKEN_STORAGE_KEY) ?? '')
+  /**
+   * 解锁凭证：普通情况放 sessionStorage（关标签页就没了），
+   * 在可信设备/IP 上勾了「记住」的放 localStorage（30 天）。
+   */
+  const gateToken = ref<string>(
+    localStorage.getItem(GATE_TOKEN_STORAGE_KEY) || sessionStorage.getItem(GATE_TOKEN_STORAGE_KEY) || '',
+  )
 
-  function setGateToken(value: string) {
+  function setGateToken(value: string, remember = false) {
     gateToken.value = value
-    if (value) {
-      sessionStorage.setItem(GATE_TOKEN_STORAGE_KEY, value)
-    } else {
+    if (!value) {
       sessionStorage.removeItem(GATE_TOKEN_STORAGE_KEY)
+      localStorage.removeItem(GATE_TOKEN_STORAGE_KEY)
+      return
+    }
+    if (remember) {
+      localStorage.setItem(GATE_TOKEN_STORAGE_KEY, value)
+      sessionStorage.removeItem(GATE_TOKEN_STORAGE_KEY)
+    } else {
+      sessionStorage.setItem(GATE_TOKEN_STORAGE_KEY, value)
+      localStorage.removeItem(GATE_TOKEN_STORAGE_KEY)
     }
   }
 
@@ -47,9 +60,10 @@ export const useGateStore = defineStore('gate', () => {
   }
 
   /** 输入二级密码，成功后保存解锁凭证 */
-  async function unlock(password: string) {
-    const data = await apiGateUnlock(password)
-    if (data?.gateToken) setGateToken(data.gateToken)
+  async function unlock(password: string, remember = false) {
+    const data = await apiGateUnlock(password, remember)
+    // 只有服务端认可「可信来源」时才会返回 remember，前端照着存
+    if (data?.gateToken) setGateToken(data.gateToken, !!data.remember)
     unlocked.value = true
     locked.value = false
     lockSeconds.value = 0

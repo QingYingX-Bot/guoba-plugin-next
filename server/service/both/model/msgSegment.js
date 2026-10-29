@@ -379,6 +379,16 @@ function button(item) {
 async function fileSeg(type, msg, ctx) {
   const seg = {type, name: typeof msg.name === 'string' ? msg.name : ''}
   /**
+   * 图片的 sub_type：1 表示表情包。
+   *
+   * 面板里发出去的表情也是图片段，只是带了 sub_type=1；不带下来的话回显会变成
+   * 一张能点开放大的大图 —— QQ 客户端里它是小表情。
+   * ICQQ 那边这个标记叫 asface（parser 只给图片段设这个），一并认。
+   */
+  const subType = msg.sub_type ?? msg.subType ?? msg.data?.sub_type
+  if (subType != null && Number.isFinite(Number(subType))) seg.subType = Number(subType)
+  else if (msg.asface) seg.subType = 1
+  /**
    * url 优先。真实消息段里 `file` 是 `xxx.image` 这类平台内部名，`Bot.fileType` 读不了，
    * 能看的只有 url；插件发出来的段则通常只有 file，两种都覆盖到。
    */

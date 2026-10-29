@@ -11,6 +11,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import GIcon from '@/components/GIcon.vue'
 import { applyMdImageSize } from '@/utils/mdImage'
+import { withMountPrefix } from '@/utils/env'
 import type { MsgBtn, MsgSeg } from '@/api'
 
 const props = defineProps<{ seg: MsgSeg }>()
@@ -131,6 +132,16 @@ const fileIcon: Record<string, string> = {
   video: 'ant-design:video-camera-outlined',
   file: 'ant-design:file-outlined',
 }
+
+/**
+ * QQ 自带的表情在面板里有一整套图（web/public/faces），按 id 直接取。
+ * 不认识的表情 id（新版本客户端加的）取不到图，退回文字。
+ */
+const faceFailed = ref(false)
+const faceSrc = computed(() => {
+  const id = String(props.seg.id ?? '')
+  return /^\d+$/.test(id) ? withMountPrefix(`/faces/${id}.png`) : ''
+})
 </script>
 
 <template>
@@ -149,10 +160,31 @@ const fileIcon: Record<string, string> = {
     <span v-else>引用</span>
   </span>
 
-  <span v-else-if="seg.type === 'face'" class="g-seg-face">[表情{{ seg.id }}]</span>
+  <span v-else-if="seg.type === 'face'" class="g-seg-face">
+    <img
+      v-if="faceSrc && !faceFailed"
+      :src="faceSrc"
+      :title="`表情 ${seg.id}`"
+      alt=""
+      class="g-seg-face-img"
+      @error="faceFailed = true"
+    />
+    <template v-else>[表情{{ seg.id }}]</template>
+  </span>
 
   <template v-else-if="seg.type === 'image'">
-    <span v-if="seg.error || seg.tooLarge || imgFailed || !src" class="g-seg-bad">
+    <!-- 表情包（sub_type=1）按小图渲染，跟 QQ 里一样，不铺成大图 -->
+    <span v-if="seg.subType === 1" class="g-seg-sticker">
+      <img
+        v-if="src && !imgFailed"
+        :src="src"
+        :alt="seg.name || '表情'"
+        loading="lazy"
+        @error="onImgError"
+      />
+      <span v-else class="g-seg-sticker-bad">[表情]</span>
+    </span>
+    <span v-else-if="seg.error || seg.tooLarge || imgFailed || !src" class="g-seg-bad">
       <GIcon icon="ant-design:picture-outlined" :size="13" />
       <template v-if="seg.tooLarge">
         图片过大，未加载{{ sizeText ? `（${sizeText}）` : '' }}
@@ -322,6 +354,37 @@ const fileIcon: Record<string, string> = {
 .g-seg-at,
 .g-seg-face {
   color: var(--g-brand);
+}
+
+/* 表情图跟正文基线对齐，别把行高顶起来 */
+.g-seg-face {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -7px;
+}
+
+.g-seg-face-img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+/* 表情包：比小黄脸大一圈，跟 QQ 里的观感接近 */
+.g-seg-sticker {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.g-seg-sticker img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+
+.g-seg-sticker-bad {
+  color: var(--g-text-dim);
+  font-size: 12px;
 }
 
 /* 引用：单独一条细带压在气泡顶部，别跟正文混在一行 */

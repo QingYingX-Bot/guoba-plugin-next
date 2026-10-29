@@ -249,7 +249,7 @@ function onButtonClick(btn: SandboxButton) {
 
 provide('msgButtonClick', onButtonClick)
 // 沙盒的图片都在服务端的沙盒资源表里，没有 http 直链，所以不用 provide 代理地址
-provide('msgAssetUrl', (assetId: string) => sandboxAssetUrl(assetId, auth.token))
+provide('msgAssetUrl', (assetId: string) => sandboxAssetUrl(assetId, auth.liteToken))
 // reply 段只带被引用消息的 id，气泡上要显示「谁说了什么」就得回本页的记录里查
 provide('msgReply', (id: string) => {
   const item = chat.value.find((i) => i.id === id)
@@ -345,7 +345,7 @@ function onMsgMenuClick({ key }: { key: string }) {
 /** 图片段的取用地址：http 直链原样用，其余走沙盒资源接口 */
 function imgSrc(seg: SandboxSegment) {
   if (seg.url) return seg.url
-  return seg.assetId ? sandboxAssetUrl(seg.assetId, auth.token) : ''
+  return seg.assetId ? sandboxAssetUrl(seg.assetId, auth.liteToken) : ''
 }
 
 /**

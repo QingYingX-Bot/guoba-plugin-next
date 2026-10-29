@@ -116,6 +116,8 @@ export interface ThemeOptions {
   borderRadius?: number
   /** 基础字号（px） */
   fontSize?: number
+  /** 毛玻璃主题：按钮 / 标签的底从 token 层直接透明，不跟 CSS 抢优先级 */
+  glass?: boolean
 }
 
 /**
@@ -145,6 +147,14 @@ export function useThemeConfig(options: ThemeOptions): ThemeConfig {
         colorItemBgSelected: withAlpha(primary, isDark ? 0.16 : 0.13),
         colorItemTextSelected: ink,
       },
+      ...(options.glass
+        ? {
+            Button: {
+              ...base.components?.Button,
+              colorBgContainer: 'transparent',
+            },
+          }
+        : {}),
     },
   }
 }

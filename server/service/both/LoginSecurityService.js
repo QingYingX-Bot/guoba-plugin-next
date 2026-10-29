@@ -112,8 +112,15 @@ export class LoginSecurityService extends Service {
     try {
       const dir = path.join(_paths.data, 'guoba')
       fs.mkdirSync(dir, { recursive: true })
+      const file = path.join(dir, 'security-audit.log')
       const line = JSON.stringify({ time: this.#nowText(), event, ...detail })
-      fs.appendFileSync(path.join(dir, 'security-audit.log'), line + '\n')
+      fs.appendFileSync(file, line + '\n')
+      // 审计日志里有 IP、设备信息，只给属主读
+      try {
+        fs.chmodSync(file, 0o600)
+      } catch {
+        // Windows 上权限位语义不同，失败不影响记录
+      }
     } catch (error) {
       logger.error('[Guoba] 安全审计日志写入失败')
       logger.error(error)
@@ -252,6 +259,28 @@ export class LoginSecurityService extends Service {
     }
   }
 
+  /**
+   * 面板上手动添加可信 IP（已存在时只更新备注）。
+   * 手动加的条目和验证码自动加的一样，都按来源 IP 免验证码。
+   */
+  async addTrustedIpManually(rawIp, note) {
+    const ip = normalizeClientIp(rawIp)
+    if (!ip) throw new GuobaError('IP 格式不正确，只支持 IPv4 / IPv6')
+    const records = this.getTrustedIpRecords()
+    const remark = typeof note === 'string' ? note.trim().slice(0, 200) : ''
+    const existing = records.find(r => r.ip === ip)
+    if (existing) {
+      if (!remark) throw new GuobaError('这个 IP 已经在可信列表里了')
+      cfg.set('auth.trustedIps', records.map(r => (r.ip === ip ? {...r, device: remark} : r)))
+      return this.getSecurity()
+    }
+    if (records.length >= Constant.TRUSTED_IP_MAX) {
+      throw new GuobaError(`可信 IP 最多 ${Constant.TRUSTED_IP_MAX} 条，先清掉不用的`)
+    }
+    cfg.set('auth.trustedIps', [...records, {ip, device: remark || '手动添加'}])
+    return this.getSecurity()
+  }
+
   /* ---------------- 可信设备 ---------------- */
 
   /**
@@ -380,15 +409,46 @@ export class LoginSecurityService extends Service {
     return {id: deviceId, secret}
   }
 
-  revokeDevice(id) {
+  async revokeDevice(id) {
     const target = typeof id === 'string' ? id : ''
     this.#saveDevices(this.getTrustedDevices().filter(d => d.id !== target))
-    return this.getSecurity()
+    const kicked = await this.#kickDeviceSessions(target)
+    return {...this.getSecurity(), kicked}
   }
 
-  clearDevices() {
+  async clearDevices() {
     cfg.set('auth.trustedDevices', [])
-    return this.getSecurity()
+    const kicked = await this.#kickDeviceSessions('')
+    return {...this.getSecurity(), kicked}
+  }
+
+  /**
+   * 吊销某台设备的登录会话，deviceId 为空表示所有设备。
+   *
+   * 只删配置的话，已登录的浏览器靠滑动续期能一直用下去，面板上看着就是「撤销了还能进」。
+   * 索引 key 形如 device-session:<deviceId>:<token>，token 是最后一段（JWT 里没有冒号）。
+   */
+  async #kickDeviceSessions(deviceId) {
+    const prefix = Constant.REDIS_PREFIX + (deviceId ? `device-session:${deviceId}:` : 'device-session:')
+    let keys = []
+    try {
+      keys = await redis.keys?.(prefix + '*')
+    } catch {
+      return 0
+    }
+    if (!Array.isArray(keys) || !keys.length) return 0
+    let count = 0
+    for (const key of keys) {
+      const rest = key.slice(prefix.length)
+      const idx = rest.lastIndexOf(':')
+      const token = idx >= 0 ? rest.slice(idx + 1) : rest
+      if (token) {
+        await redis.del(Constant.REDIS_PREFIX + 'access-token:' + token)
+        count++
+      }
+      await redis.del(key)
+    }
+    return count
   }
 
   /**
@@ -474,8 +534,10 @@ export class LoginSecurityService extends Service {
         : undefined
       await this.addTrustedIp(ip, device)
     }
-    // 每次登录都换一份新的设备凭证，前端存下来，下次换了IP也不用验证码
-    return {token: loginService.signToken(username), device: this.issueDevice(req, known)}
+    // 每次登录都换一份新的设备凭证，前端存下来，下次换了IP也不用验证码；
+    // 令牌和这台设备绑在一起，面板上撤销设备时能把它的登录会话一起踢掉
+    const credential = this.issueDevice(req, known)
+    return {token: loginService.signToken(username, credential.id), device: credential}
   }
 
   getSecurity() {

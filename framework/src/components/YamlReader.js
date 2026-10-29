@@ -131,5 +131,12 @@ export default class YamlReader {
     this.isSave = true
     let yaml = this.document.toString()
     fs.writeFileSync(this.yamlPath, yaml, 'utf8')
+    // 这些 yaml 里可能有账号、密码、jwt secret，落盘后只给属主读写。
+    // Windows 上权限位语义不同，chmod 失败不影响功能。
+    try {
+      fs.chmodSync(this.yamlPath, 0o600)
+    } catch {
+      // ignore
+    }
   }
 }

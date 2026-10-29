@@ -1337,4 +1337,26 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+@media (max-width: 768px) {
+  /* 筛选框的内联宽度是给桌面的，手机上占满一整行才好按 */
+  .g-toolbar > :deep(.ant-input-affix-wrapper),
+  .g-toolbar > :deep(.ant-input) {
+    width: 100% !important;
+  }
+
+  /* 视图切换和 key 统计原来靠右贴，窄屏换行后独占一行，别再把页面撑宽 */
+  .g-toolbar-right {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .g-toolbar-info {
+    white-space: normal;
+    font-size: 11px;
+    text-align: right;
+  }
+}
 </style>

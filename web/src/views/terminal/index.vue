@@ -5,7 +5,7 @@
  * 长驻 shell 会话（后端 TermService），轮询拉增量输出（同日志页范式）。
  * 命令在面板进程所在环境执行 —— 等同服务器 shell，能删文件、重启 Bot，页面顶部给了提示。
  */
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import GIcon from '@/components/GIcon.vue'
 import { ansiStyle, parseAnsi, type AnsiSpan } from '@/utils/ansi'
@@ -13,6 +13,7 @@ import {
   apiTermExec,
   apiTermInterrupt,
   apiTermRestart,
+  apiTermSetEnabled,
   apiTermStatus,
   apiTermTail,
   type TermLine,
@@ -41,6 +42,9 @@ const DANGEROUS = [
 ]
 
 const status = ref<TermStatus | null>(null)
+/** 未拿到状态前先按「关」渲染：宁可不让人乱敲，也别让开关显示成开 */
+const enabled = ref(false)
+const toggling = ref(false)
 const lines = ref<TermLine[]>([])
 const input = ref('')
 const follow = ref(true)
@@ -68,6 +72,16 @@ let timer: number | undefined
 
 const boxEl = ref<HTMLElement | null>(null)
 const inputEl = ref<any>(null)
+
+/**
+ * 提示符结尾字符（# / $）。
+ * 完整提示符是 root@主机:/很/长/的/路径# 这种形态，手机上一行放不下、会把输入框压没，
+ * 窄屏就只渲染这个尾字符，完整路径看顶栏那行 cwd。
+ */
+const promptTail = computed(() => {
+  const p = String(status.value?.prompt || '$').trimEnd()
+  return p.slice(-1) || '$'
+})
 
 function isDangerous(cmd: string) {
   return DANGEROUS.some((r) => r.test(cmd))
@@ -132,6 +146,7 @@ async function doExec(cmd: string) {
 
 function onEnter(e: KeyboardEvent) {
   if (e.shiftKey) return
+  if (!enabled.value) return
   const cmd = input.value.trim()
   if (!cmd) return
   e.preventDefault()
@@ -202,11 +217,55 @@ async function restart() {
   }
 }
 
+/* ---------------- 终端开关 ---------------- */
+
+async function applyEnabled(next: boolean) {
+  toggling.value = true
+  try {
+    const res = await apiTermSetEnabled(next)
+    enabled.value = res?.enabled ?? next
+    message.success(enabled.value ? '终端已启用' : '终端已关闭')
+    if (enabled.value) {
+      await loadStatus()
+      await pull()
+      nextTick(() => inputEl.value?.focus())
+    }
+  } catch (e: any) {
+    errMsg.value = e?.message || '终端开关保存失败'
+  } finally {
+    toggling.value = false
+  }
+}
+
+/** 开关是受控的，不能靠 v-model 直接翻：先弹确认，确认后才提交 */
+function onToggleEnabled(checked: boolean) {
+  if (checked) {
+    Modal.confirm({
+      title: '启用网页终端',
+      content: '终端等同服务器 shell，能改文件、装依赖、重启 Bot。确认只在自己的设备上开启？',
+      okText: '启用',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => applyEnabled(true),
+    })
+    return
+  }
+  Modal.confirm({
+    title: '关闭终端',
+    content: '关闭后无法在面板里执行命令，随时可以在这里重新打开。',
+    okText: '关闭',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: () => applyEnabled(false),
+  })
+}
+
 /* ---------------- 生命周期 ---------------- */
 
 async function loadStatus() {
   try {
     status.value = await apiTermStatus()
+    enabled.value = status.value?.enabled === true
   } catch {
     // 状态是附加信息，取不到就算了
   }
@@ -246,18 +305,29 @@ onBeforeUnmount(() => {
       </a-tag>
       <span class="g-term-cwd">{{ status?.cwd ?? '' }}</span>
       <span class="g-term-gap" />
-      <a-button size="small" @click="interrupt" title="中断当前前台进程，等价键盘 Ctrl+C">
-        <GIcon icon="ant-design:poweroff-outlined" :size="13" />
-        Ctrl+C
-      </a-button>
-      <a-button size="small" @click="clearScreen">
-        <GIcon icon="ant-design:clear-outlined" :size="13" />
-        清屏
-      </a-button>
-      <a-button size="small" @click="restart">
-        <GIcon icon="ant-design:reload-outlined" :size="13" />
-        重启
-      </a-button>
+      <span class="g-term-switch">
+        <a-switch size="small" :checked="enabled" :loading="toggling" @change="onToggleEnabled" />
+        终端
+      </span>
+      <!-- 包一层：手机上这三个按钮要整行平分，散着放会各自换行 -->
+      <div class="g-term-acts">
+        <a-button size="small" :disabled="!enabled" @click="interrupt" title="中断当前前台进程，等价键盘 Ctrl+C">
+          <GIcon icon="ant-design:poweroff-outlined" :size="13" />
+          Ctrl+C
+        </a-button>
+        <a-button size="small" @click="clearScreen">
+          <GIcon icon="ant-design:clear-outlined" :size="13" />
+          清屏
+        </a-button>
+        <a-button size="small" :disabled="!enabled" @click="restart">
+          <GIcon icon="ant-design:reload-outlined" :size="13" />
+          重启
+        </a-button>
+      </div>
+    </div>
+
+    <div v-if="!enabled" class="g-term-off">
+      终端已关闭，打开右上角「终端」开关后才能执行命令。
     </div>
 
     <div v-if="errMsg" class="g-term-err">{{ errMsg }}</div>
@@ -277,8 +347,11 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="g-term-input">
-      <!-- 输入框前缀跟着提示符走：cd 之后这里立刻显示新路径 -->
-      <span class="g-term-prompt">{{ status?.prompt || '$ ' }}</span>
+      <!-- 提示符跟着 cwd 走；窄屏只留结尾字符，完整路径见顶栏 -->
+      <span class="g-term-prompt" :title="status?.prompt || ''">
+        <span class="p-full">{{ status?.prompt || '$ ' }}</span>
+        <span class="p-tail">{{ promptTail }}</span>
+      </span>
       <input
         ref="inputEl"
         v-model="input"
@@ -286,7 +359,14 @@ onBeforeUnmount(() => {
         autocomplete="off"
         spellcheck="false"
         class="g-term-field"
-        :placeholder="status?.running ? '命令执行中，可点 Ctrl+C 中断' : '输入命令，Enter 执行'"
+        :disabled="!enabled"
+        :placeholder="
+          !enabled
+            ? '终端已关闭，打开右上角开关后可用'
+            : status?.running
+              ? '命令执行中，可点 Ctrl+C 中断'
+              : '输入命令，Enter 执行'
+        "
         @keydown.enter="onEnter"
         @keydown="onInputKeydown"
       />
@@ -349,6 +429,24 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.g-term-off {
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: var(--g-bg-soft);
+  color: var(--g-text-dim);
+  font-size: 12px;
+}
+
+.g-term-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--g-text-dim);
+  white-space: nowrap;
+}
+
 .g-term-box {
   flex: 1;
   min-height: 0;
@@ -383,11 +481,21 @@ onBeforeUnmount(() => {
 }
 
 .g-term-prompt {
+  flex: 0 0 auto;
+  /* 长路径不限宽的话会把旁边的 input 挤成 0 宽，看着像「没法输入」 */
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   margin-right: 6px;
   color: var(--g-brand);
   /* 输出区整体是可选的（要能复制报错），提示符得单独排除，
      否则拖选一段命令粘出去全是 "$ " 打头 */
   user-select: none;
+}
+.g-term-prompt .p-tail {
+  display: none;
 }
 
 .g-term-empty {
@@ -426,5 +534,67 @@ onBeforeUnmount(() => {
 
 .g-term-field::placeholder {
   color: var(--g-text-dim);
+}
+
+.g-term-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 768px) {
+  /* 顶栏 50 + 页面上下留白 24，桌面那套 96 在手机上会多出一截空白 */
+  .g-term {
+    height: calc(100dvh - 74px);
+    min-height: 0;
+  }
+
+  /* 第一行：shell + 状态 + 开关 + 路径；第二行：三个按钮平分 */
+  .g-term-head {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    margin-bottom: 8px;
+  }
+
+  .g-term-switch {
+    order: 3;
+  }
+
+  .g-term-cwd {
+    order: 4;
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    /* 桌面用 rtl 是为了尾部省略，手机上路径短，ltr 才不会被显示成 root/JiuLi/ */
+    direction: ltr;
+    text-align: right;
+  }
+
+  /* 手机上 root@主机:/长/路径# 能占满整行，输入框就没了；只留 # / $ 最省地方 */
+  .g-term-prompt {
+    max-width: none;
+  }
+
+  .g-term-prompt .p-full {
+    display: none;
+  }
+
+  .g-term-prompt .p-tail {
+    display: inline;
+  }
+
+  .g-term-acts {
+    order: 5;
+    width: 100%;
+    gap: 6px;
+  }
+
+  .g-term-acts > * {
+    flex: 1;
+  }
+
+  .g-term-gap {
+    display: none;
+  }
 }
 </style>

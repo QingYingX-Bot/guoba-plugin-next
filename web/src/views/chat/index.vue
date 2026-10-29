@@ -25,6 +25,8 @@ import {
   apiChatSendRaw,
   apiChatStatus,
   apiChatTail,
+  apiChatEmojiImport,
+  apiCreateMediaTicket,
   chatAssetUrl,
   chatProxyUrl,
   type ChatActiveItem,
@@ -42,7 +44,6 @@ import {
 import { writeText } from '@/utils/clipboard'
 import { scrollPageToBottom } from '@/utils/scroll'
 import { useAuthStore } from '@/stores/auth'
-import { useGateStore } from '@/stores/gate'
 
 /** 轮询间隔。消息没有日志那么密，2 秒的延迟看着还算即时 */
 const INTERVAL = 2000
@@ -102,7 +103,6 @@ const RAW_TABS: Array<{ key: RawKey; title: string; hint: string; miss: string }
 ]
 
 const auth = useAuthStore()
-const gate = useGateStore()
 
 const status = ref<ChatStatus | null>(null)
 const bots = computed(() => status.value?.bots ?? [])
@@ -215,9 +215,24 @@ function markdownOf(segments: MsgSeg[]) {
 
 /* ---------------- 段渲染要用的注入 ---------------- */
 
-provide('msgAssetUrl', (assetId: string) => chatAssetUrl(assetId, auth.token, gate.gateToken))
+/**
+ * 聊天图片走短期媒体票据：URL 里不再出现登录令牌。
+ * 票据 5 分钟过期，页面停留久了要换一张，否则新加载的图片会 401。
+ */
+const mediaTicket = ref('')
+let ticketTimer: number | undefined
+
+async function refreshMediaTicket() {
+  try {
+    mediaTicket.value = (await apiCreateMediaTicket('chat')).ticket
+  } catch {
+    // 取不到就保持空票据，页面其余部分照常可用
+  }
+}
+
+provide('msgAssetUrl', (assetId: string) => chatAssetUrl(assetId, mediaTicket.value))
 // QQ 直链的 rkey 会过期，加载失败时由服务端代拉一次
-provide('msgProxyUrl', (url: string) => chatProxyUrl(url, auth.token, gate.gateToken))
+provide('msgProxyUrl', (url: string) => chatProxyUrl(url, mediaTicket.value))
 
 /**
  * reply 段显示「昵称：摘要」—— 被引用的那条得在页面上还留着才查得到，
@@ -542,6 +557,9 @@ async function onSend(payload: ChatSendPayload) {
       if (payload.ats?.length) {
         fd.set('ats', JSON.stringify(payload.ats.map((a) => ({ qq: a.qq, name: a.name }))))
       }
+      // 表情：QQ 自带的走 face id，收藏 / 自定义的是图片，后端负责换字节
+      if (payload.faces?.length) fd.set('faces', JSON.stringify(payload.faces))
+      if (payload.emojis?.length) fd.set('emojis', JSON.stringify(payload.emojis))
       for (const file of payload.images) fd.append('files', file)
       for (const file of payload.files) fd.append('files', file)
       data = await apiChatSend(fd)
@@ -773,6 +791,34 @@ async function onResendMd(msg: ChatMsg) {
   }
 }
 
+/**
+ * 右键「收藏表情」：把这条消息里的表情收进自定义表情。
+ *
+ * 段数据随请求一起传，不指望后端还能在内存里找到这条 —— 面板的缓冲只有 1000 条，
+ * 重启就清空，靠 messageId 去查的话历史消息全都收藏不了。
+ * 只认表情段（face / 表情包图片），普通图片不碰 —— 收藏的是表情，不是相册。
+ */
+async function onCollectEmoji(msg: ChatMsg) {
+  const segments = (msg.segments ?? [])
+    .filter((s) => s.type === 'face' || s.type === 'image')
+    .map((s) =>
+      s.type === 'face'
+        ? { type: 'face', id: String(s.id ?? '') }
+        : { type: 'image', url: s.url, assetId: s.assetId },
+    )
+  if (!segments.length) {
+    message.warning('这条消息里没有可收藏的图')
+    return
+  }
+  try {
+    const data = await apiChatEmojiImport({ messageId: msg.messageId ?? '', segments })
+    if (data.added?.length) message.success(`已收藏 ${data.added.length} 张表情`)
+    else message.info('这些表情已经收藏过了')
+  } catch {
+    // 请求层已经弹过错误
+  }
+}
+
 /** 合并转发的内容在 QQ 服务端，点开时才去取，取回来填进段里 */
 async function onForward({ msg, seg }: { msg: ChatMsg; seg: MsgSeg }) {
   const session = current.value
@@ -826,8 +872,11 @@ function syncNarrow() {
 
 onMounted(async () => {
   await loadStatus()
+  await refreshMediaTicket()
   await pull()
   timer = window.setInterval(pull, INTERVAL)
+  // 票据 5 分钟过期，页面停留久了要换一张，不然新加载的图片会 401
+  ticketTimer = window.setInterval(refreshMediaTicket, 4 * 60 * 1000)
   // 改窗宽会挪动消息流那一栏，开着的弹窗跟着走
   window.addEventListener('resize', syncRawPos)
   narrowMq.addEventListener('change', syncNarrow)
@@ -836,6 +885,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (timer) window.clearInterval(timer)
   timer = undefined
+  if (ticketTimer) window.clearInterval(ticketTimer)
+  ticketTimer = undefined
   ro?.disconnect()
   ro = undefined
   window.removeEventListener('resize', syncRawPos)
@@ -977,6 +1028,7 @@ const dateFlags = computed(() => {
                 @poke="onPoke"
                 @resend="onResend"
                 @resend-md="onResendMd"
+                @collect-emoji="onCollectEmoji"
               />
             </div>
           </div>
@@ -994,6 +1046,8 @@ const dateFlags = computed(() => {
             :max-images="maxImages"
             :qqbot="isQQBot"
             :reply="replyTo"
+            :bot-id="current?.botId ?? ''"
+            :emoji-ticket="mediaTicket"
             @send="onSend"
             @cancel-reply="replyTo = null"
           />

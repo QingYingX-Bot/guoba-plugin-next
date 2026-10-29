@@ -44,6 +44,8 @@ const emit = defineEmits<{
   resend: [msg: ChatMsg]
   /** 右键「复读(MD)」：把这条的正文当 markdown 再发一遍 */
   resendMd: [msg: ChatMsg]
+  /** 右键「收藏表情」：把这条消息里的表情收进自定义表情 */
+  collectEmoji: [msg: ChatMsg]
 }>()
 
 const avatarFailed = ref(false)
@@ -57,6 +59,11 @@ const botAppId = inject<((uin?: string) => string) | null>('chatBotAppId', null)
  * rawMsg / rawEvent、两种被动回复、复读(MD) 都是 QQBot 专有的。
  */
 const isQQBot = computed(() => (botAdapter?.(props.msg.botId) ?? '') === 'QQBot')
+
+/** 这条消息里有没有能收藏的图：QQ 自带的小黄脸、表情包，或者一张普通图片 */
+const hasEmoji = computed(() =>
+  (props.msg.segments ?? []).some((s) => s.type === 'face' || s.type === 'image'),
+)
 
 const name = computed(() => {
   const s = props.msg.sender
@@ -189,6 +196,7 @@ function onMenuClick({ key }: { key: string }) {
   else if (key === 'poke') emit('poke', props.msg)
   else if (key === 'resend') emit('resend', props.msg)
   else if (key === 'resendMd') emit('resendMd', props.msg)
+  else if (key === 'collectEmoji') emit('collectEmoji', props.msg)
 }
 
 /** 整条复制：文本和图片一起进剪贴板，跟沙盒一致 */
@@ -302,6 +310,10 @@ async function copyMessage() {
           <a-menu-item key="copy">
             <GIcon icon="ant-design:copy-outlined" :size="13" />
             复制
+          </a-menu-item>
+          <a-menu-item v-if="hasEmoji" key="collectEmoji">
+            <GIcon icon="😊" :size="13" />
+            收藏表情
           </a-menu-item>
           <template v-if="isQQBot">
             <a-menu-item key="rawMsg">

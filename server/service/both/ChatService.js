@@ -1,7 +1,7 @@
 import net from 'node:net'
 import fs from 'node:fs/promises'
 import {lookup as dnsLookup} from 'node:dns/promises'
-import {GuobaError, Service} from '#guoba.framework'
+import {autowired, GuobaError, Service} from '#guoba.framework'
 import {AssetStore, flattenOneBot, normalizeMsg, toBase64File} from './model/msgSegment.js'
 import {groupAvatarUrl, userAvatarUrl} from './model/avatar.js'
 import {listBots, ensureContacts} from './model/bots.js'
@@ -58,6 +58,8 @@ const MEDIA_EXT = {
 }
 /** 一条消息最多 @ 几个人 */
 const MAX_SEND_ATS = 10
+/** 一次最多带几个表情（QQ 小黄脸 + 收藏 / 自定义表情合计） */
+const MAX_SEND_EMOJIS = 20
 /** Raw JSON 的长度上限 */
 const MAX_RAW_LEN = 20000
 /**
@@ -340,7 +342,7 @@ function mediaSegType(file) {
  * 图片代理只在浏览器直连失败时兜底，而能直连的都是公网地址，所以拦掉内网对正常使用
  * 没有影响 —— 但能挡住拿这个接口探测 Bot 所在内网。解析不出来的一并当作不安全。
  */
-function isPrivateIp(ip) {
+export function isPrivateIp(ip) {
   const ver = net.isIP(ip)
   if (ver === 4) {
     const [a, b] = ip.split('.').map(Number)
@@ -381,6 +383,9 @@ function isPrivateIp(ip) {
  * 缓冲只在内存里，重启即丢；要长期留存请用 QQ 客户端。
  */
 export default class ChatService extends Service {
+
+  /** 收藏 / 自定义表情的存取，发送时按它把表情换成字节 */
+  chatEmojiService = autowired('chatEmojiService')
 
   /** 全局环形缓冲，按 key 过滤出单个会话 */
   #messages = []
@@ -964,6 +969,8 @@ export default class ChatService extends Service {
       if (seg.type === 'text') text += seg.text ?? ''
       else if (seg.type === 'at') text += `@${seg.name || seg.qq}`
       else if (seg.type === 'markdown') text += mdPreview(seg.content) || PREVIEW_TEXT.markdown
+      // 表情包也是一张图，但摘要是给人扫一眼的，写成 [表情] 比 [图片] 准确
+      else if (seg.type === 'image' && seg.subType === 1) text += PREVIEW_TEXT.face
       else text += PREVIEW_TEXT[seg.type] ?? `[${seg.type}]`
       if (text.length > PREVIEW_LEN) break
     }
@@ -1547,6 +1554,11 @@ export default class ChatService extends Service {
     return asset
   }
 
+  /** 按 id 取内存里的那条消息（收藏表情要按段取字节） */
+  getBuffered(messageId) {
+    return this.#index.get(String(messageId ?? '')) ?? null
+  }
+
   /**
    * 代理一张图。
    *
@@ -1604,10 +1616,13 @@ export default class ChatService extends Service {
    * @param kind    消息类型：legacy（普通，默认）/ markdown / ark / media（富媒体）。
    *                后三种只有 QQ 官方机器人（QQBot-Plugin）认得，面板只在 QQBot 会话下给。
    * @param ark     kind=ark 时的参数，JSON 字符串 `{template_id, kv}`
+   * @param faces   QQ 自带表情的 face id 数组，元素可以是数字或数字字符串
+   * @param emojis  收藏 / 自定义表情，元素为 `{kind: 'fav', url}` 或 `{kind: 'custom', id}`
    */
   async send({
     botId, type, id, text = '', images = [], files = [], ats = [],
     replyTo = '', replyMsgId = '', replyEventId = '', kind = 'legacy', ark = '',
+    faces = [], emojis = [],
   } = {}) {
     const msg = []
     if (replyTo) msg.push({type: 'reply', id: String(replyTo)})
@@ -1655,6 +1670,23 @@ export default class ChatService extends Service {
       if (uin) msg.push({type: 'at', qq: uin, ...(atName ? {name: atName} : {})})
     }
     /**
+     * 表情：QQ 自带的发 face 段；收藏 / 自定义表情是图片，带上 sub_type=1，
+     * 客户端才会按表情包渲染（不然就是一张能点开放大的普通图片）。
+     */
+    const faceIds = this.#parseFlatList(faces)
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id >= 0)
+      .slice(0, MAX_SEND_EMOJIS)
+    for (const fid of faceIds) msg.push({type: 'face', id: fid})
+    const emojiItems = this.#parseFlatList(emojis)
+      .filter((item) => item && typeof item === 'object')
+      .slice(0, MAX_SEND_EMOJIS)
+    for (const item of emojiItems) {
+      const buffer = await this.chatEmojiService.resolveForSend(item)
+      // sub_type 是 OneBot 的字段，asface 是 ICQQ 的；各实现只认自己那个，多的会被忽略
+      if (buffer?.length) msg.push({type: 'image', file: buffer, sub_type: 1, asface: true})
+    }
+    /**
      * 图片优先用 multipart 上来的字节。
      *
      * 共享 TRSS 端口时 body 解析器是宿主的 `express.json()`（默认 100kb 上限），
@@ -1662,7 +1694,8 @@ export default class ChatService extends Service {
      */
     const uploads = this.#toArray(files).slice(0, MAX_SEND_IMAGES)
     // 被 @ 的人和后面的内容之间补一个空格，QQ 客户端里不然会「@张三文字」贴在一起
-    if (msg.some((i) => i.type === 'at') && (uploads.length || this.#toArray(images).length || text)) {
+    if (msg.some((i) => i.type === 'at')
+      && (uploads.length || this.#toArray(images).length || faceIds.length || emojiItems.length || text)) {
       msg.push({type: 'text', text: ' '})
     }
     for (const file of uploads) {
@@ -1686,6 +1719,23 @@ export default class ChatService extends Service {
   #toArray(v) {
     if (Array.isArray(v)) return v
     return v == null || v === '' ? [] : [v]
+  }
+
+  /**
+   * multipart 表单里的数组字段是 JSON 文本，JSON body 里已经是数组，两种都收。
+   * 解析不出来就当没传，别为了一条表情把整条消息打回去。
+   */
+  #parseFlatList(v) {
+    if (Array.isArray(v)) return v
+    if (typeof v !== 'string') return v == null || v === '' ? [] : [v]
+    const t = v.trim()
+    if (!t) return []
+    try {
+      const p = JSON.parse(t)
+      return Array.isArray(p) ? p : [p]
+    } catch {
+      return []
+    }
   }
 
   /**
@@ -1951,8 +2001,10 @@ export default class ChatService extends Service {
       } else if (seg.type === 'image') {
         // 优先用回显时留的字节（自己发的图），没有就退回直链（收到的图，rkey 可能已过期）
         const asset = seg.assetId ? this.#assets.get(seg.assetId) : null
-        if (asset?.buffer) out.push({type: 'image', file: asset.buffer, name: seg.name})
-        else if (seg.url) out.push({type: 'image', file: seg.url})
+        // 表情包复读还得是表情包：sub_type 给 OneBot、asface 给 ICQQ
+        const sticker = seg.subType === 1 ? {sub_type: 1, asface: true} : {}
+        if (asset?.buffer) out.push({type: 'image', file: asset.buffer, name: seg.name, ...sticker})
+        else if (seg.url) out.push({type: 'image', file: seg.url, ...sticker})
       } else if ((seg.type === 'record' || seg.type === 'video' || seg.type === 'file') && seg.url) {
         out.push({type: seg.type, file: seg.url, name: seg.name})
       }

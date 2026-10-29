@@ -25,6 +25,7 @@ export class LoginController extends ApiController {
     this.put('/login/security/security-master', this.setSecurityMaster)
     this.delete('/login/security/trusted-ips/:ip', this.revokeIp)
     this.delete('/login/security/trusted-ips', this.clearIps)
+    this.post('/login/security/trusted-ips', this.addTrustedIp)
     this.delete('/login/security/trusted-devices/:id', this.revokeDevice)
     this.delete('/login/security/trusted-devices', this.clearDevices)
   }
@@ -106,12 +107,19 @@ export class LoginController extends ApiController {
     return Result.ok(this.loginSecurityService.clearIps(), '已清空可信IP')
   }
 
+  async addTrustedIp(req) {
+    const data = await this.loginSecurityService.addTrustedIpManually(req.body?.ip, req.body?.note)
+    return Result.ok(data, '已添加可信 IP')
+  }
+
   async revokeDevice(req) {
-    return Result.ok(this.loginSecurityService.revokeDevice(req.params.id), '已撤销该设备')
+    const data = await this.loginSecurityService.revokeDevice(req.params.id)
+    return Result.ok(data, '已撤销该设备')
   }
 
   async clearDevices() {
-    return Result.ok(this.loginSecurityService.clearDevices(), '已清空可信设备')
+    const data = await this.loginSecurityService.clearDevices()
+    return Result.ok(data, '已清空可信设备')
   }
 
   async logout(req) {

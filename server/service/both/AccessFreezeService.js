@@ -1,11 +1,13 @@
 import { Service } from '#guoba.framework'
 import { cfg, Constant } from '#guoba.platform'
 import { sendToMasterUser, sendToOneMaster } from '#guoba.utils'
+import { getClientIp } from '../../utils/clientIp.js'
 import {
   closeExistingWebSockets,
   installPortGuard,
   setPortFrozen,
 } from '../../utils/freezePortGuard.js'
+import { isLanIp } from '../../utils/lanGuard.js'
 
 /**
  * 锅巴冻结。
@@ -17,8 +19,12 @@ import {
  * 登录密码连错 3 次同样冻结面板（见 LoginSecurityService.handleTooManyPasswordFailures），
  * 不再重置凭证 —— 重置只会给陌生人一个「把面板打回未初始化」的按钮。
  *
- * 冻结同时会打开端口闸门（见 utils/freezePortGuard.js）：
- * 对外不再响应面板请求，只保留本机回环上的机器人协议端连接。
+ * 冻结按触发来源分两档（`scope`），端口闸门见 utils/freezePortGuard.js：
+ * - `wan`：外网来源连错 —— 只对外网关掉端口，局域网访问面板、协议端连接一切照常，
+ *   面板会话也不作废（外网已经进不来，没必要连主人自己一起踢）；
+ * - `all`：局域网来源（或来源不明）连错 —— 整个面板冻结，所有会话作废。
+ * wan 期间局域网再连错会升级成 all；已经是 all 不会被降回 wan。
+ * 老版本写的冻结记录没有 scope，一律按 all 处理。
  */
 export class AccessFreezeService extends Service {
 
@@ -36,7 +42,7 @@ export class AccessFreezeService extends Service {
 
   async #syncPortState() {
     try {
-      setPortFrozen(!!(await redis.get(this.key)))
+      setPortFrozen(scopeOf(await this.getInfo()))
     } catch {
       // 读不到就维持未冻结，避免把面板误锁死
     }
@@ -55,7 +61,7 @@ export class AccessFreezeService extends Service {
     }
   }
 
-  /** 冻结信息：{reason, at, ip, ua}，未冻结返回 null */
+  /** 冻结信息：{reason, at, ip, ua, scope}，未冻结返回 null */
   async getInfo() {
     try {
       const raw = await redis.get(this.key)
@@ -66,38 +72,59 @@ export class AccessFreezeService extends Service {
     }
   }
 
+  /** 这个请求是否被当前冻结挡住（wan 冻结时局域网不挡） */
+  isBlocked(info, req) {
+    if (!info) return false
+    if (scopeOf(info) === 'all') return true
+    return !isLanIp(getClientIp(req))
+  }
+
   /**
-   * 冻结面板。首次冻结时私聊通知主人。
+   * 冻结面板。首次冻结（或 wan 升级成 all）时私聊通知主人。
    * @param reason 给主人看的原因，如「登录密码连续输错 3 次」
    * @param detail {ip, ua}
    */
   async freeze(reason, detail = {}, ttlSeconds = 0) {
+    const ip = detail.ip || ''
+    // 来源不明按局域网处理（全面冻结），宁可多锁也别漏
+    let scope = ip && !isLanIp(ip) ? 'wan' : 'all'
+    let previous = null
+    try {
+      previous = await this.getInfo()
+    } catch {
+      // 忽略，照常写入
+    }
+    const previousScope = scopeOf(previous)
+    // 已经全面冻结的不降级：外网再来连错只是重复触发
+    if (previousScope === 'all') scope = 'all'
+    // 范围没变就保留第一次的现场，别让后来的请求把原因 / 来源盖掉
+    if (previous && previousScope === scope) {
+      setPortFrozen(scope)
+      closeExistingWebSockets()
+      await this.clearAttempts()
+      return previous
+    }
     const info = {
       reason,
       at: Date.now(),
-      ip: detail.ip || '',
+      ip,
       ua: typeof detail.ua === 'string' ? detail.ua.slice(0, 200) : '',
-    }
-    let existed = false
-    try {
-      existed = !!(await redis.get(this.key))
-    } catch {
-      // 忽略，照常写入
+      scope,
     }
     if (ttlSeconds > 0) {
       await redis.set(this.key, JSON.stringify(info), { EX: ttlSeconds })
     } else {
       await redis.set(this.key, JSON.stringify(info))
     }
-    // 端口闸门立即生效，并断开已经建立的 WS（机器人会自动从回环重连）
-    setPortFrozen(true)
+    // 端口闸门立即生效，并断开外网（以及 all 时局域网非协议端）已经建立的 WS
+    setPortFrozen(scope)
     closeExistingWebSockets()
-    // 冻结视为安全事件：所有面板登录会话与二级密码解锁凭证一并作废，
-    // 解冻后要重新输入账号密码
-    await this.clearSessions()
+    // 全面冻结视为安全事件：所有面板登录会话与二级密码解锁凭证一并作废，
+    // 解冻后要重新输入账号密码。只关外网时外网已经进不来，局域网的会话照常用
+    if (scope === 'all') await this.clearSessions()
     // 同时清掉双方的错误计数：解冻后重新从 0 开始
     await this.clearAttempts()
-    if (!existed) this.#notify(info)
+    this.#notify(info, previous)
     return info
   }
 
@@ -143,18 +170,20 @@ export class AccessFreezeService extends Service {
   }
 
   /** 冻结时私聊通知主人 */
-  #notify(info) {
+  #notify(info, previous) {
     try {
       const now = new Date(info.at)
       const pad = (value) => String(value).padStart(2, '0')
       const time = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
         + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
-      const lines = [
-        `[锅巴面板] 已冻结：${info.reason}`,
-        `时间：${time}`,
-        `来源 IP：${info.ip || '未知'}`,
-      ]
+      const title = info.scope === 'wan'
+        ? `[锅巴面板] 已关闭外网访问：外网${info.reason}`
+        : previous
+          ? `[锅巴面板] 已全面冻结：局域网内也${info.reason}`
+          : `[锅巴面板] 已冻结：${info.reason}`
+      const lines = [title, `时间：${time}`, `来源 IP：${info.ip || '未知'}`]
       if (info.ua) lines.push(`设备：${info.ua}`)
+      if (info.scope === 'wan') lines.push('局域网访问面板、机器人运行不受影响')
       lines.push('解除：私聊机器人发送 #锅巴解冻（不会自动解除）')
       const message = lines.join('\n')
       const target = cfg.get('auth.securityMaster')
@@ -168,4 +197,10 @@ export class AccessFreezeService extends Service {
       logger.error(error)
     }
   }
+}
+
+/** 冻结范围：未冻结 false；老记录没有 scope 按 all */
+function scopeOf(info) {
+  if (!info) return false
+  return info.scope === 'wan' ? 'wan' : 'all'
 }

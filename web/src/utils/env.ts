@@ -10,6 +10,10 @@
 
 import type { ThemeSettings } from '@/theme/config'
 
+declare const __BUILD_TIME__: string
+/** 构建时间（侧栏展示），用来确认浏览器加载的是不是最新版本 */
+export const BUILD_TIME = typeof __BUILD_TIME__ === 'string' ? __BUILD_TIME__ : ''
+
 /** 后端真实挂载前缀，见 utils/paths.js 的 realMountPrefix */
 export const REAL_MOUNT_PREFIX = '/guoba-plugin-mock-root'
 

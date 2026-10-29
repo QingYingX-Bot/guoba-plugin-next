@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import {
@@ -131,6 +131,32 @@ const list = computed(() => {
 
 function authorText(p: PluginItem) {
   return Array.isArray(p.author) ? p.author.join('、') : (p.author ?? '')
+}
+
+/* ---------------- 手机上分批显示 ---------------- */
+
+/**
+ * 手机上先渲染一屏，滚到底再点「加载更多」追加。
+ *
+ * 三四十个插件一次性建卡片，主线程要卡一两秒，滚动手感也会跟着垮。
+ * 这里把页面上的卡片数量控住，切换筛选也只看首屏，代价是多个按钮。
+ * 桌面不限量，一次渲染完。
+ */
+const PAGE_SIZE = 8
+const visibleLimit = ref(appStore.isMobile ? PAGE_SIZE : Number.POSITIVE_INFINITY)
+
+const shownList = computed(() => list.value.slice(0, visibleLimit.value))
+const hasMore = computed(() => shownList.value.length < list.value.length)
+
+watch(
+  () => list.value,
+  () => {
+    visibleLimit.value = appStore.isMobile ? PAGE_SIZE : Number.POSITIVE_INFINITY
+  },
+)
+
+function loadMore() {
+  visibleLimit.value += PAGE_SIZE
 }
 
 async function load(force = false) {
@@ -293,7 +319,7 @@ onMounted(() => {
     <Empty v-else-if="!list.length && !gitLoading" :description="emptyText" />
 
     <Row v-else-if="!gitLoading" :gutter="[16, 16]">
-      <Col v-for="p in list" :key="p.name" :xs="24" :sm="12" :lg="8" :xxl="6">
+      <Col v-for="p in shownList" :key="p.name" :xs="24" :sm="12" :lg="8" :xxl="6">
         <Card :bordered="false" class="g-plugin-card">
           <div class="g-plugin-top">
             <PluginIcon :plugin="p" :size="38" />
@@ -323,7 +349,8 @@ onMounted(() => {
           </div>
 
           <!-- git 信息：分支 / 当前提交 / 上次检查时间，非 git 仓库说明原因 -->
-          <div v-if="p.installed && gitOf(p)" class="g-plugin-gitbox">
+          <!-- 手机上不铺 git / 提交信息：又小又挤，还让每张卡的 DOM 多出一截；详情页里能看 -->
+          <div v-if="p.installed && gitOf(p) && !appStore.isMobile" class="g-plugin-git">
             <template v-if="gitOf(p)!.updatable">
               <GIcon icon="ant-design:branches-outlined" :size="12" />
               <span>{{ gitOf(p)!.branch }}</span>
@@ -336,16 +363,16 @@ onMounted(() => {
                 不能自动更新
               </span>
             </Tooltip>
+          </div>
 
           <!-- 当前装的是哪一版：提交标题一行截断，下面跟作者和时间 -->
-          <div v-if="p.installed && gitOf(p)?.lastCommit" class="g-plugin-commit">
+          <div v-if="p.installed && gitOf(p)?.lastCommit && !appStore.isMobile" class="g-plugin-commit">
             <div class="g-plugin-commit-subject" :title="gitOf(p)!.lastCommit!.subject">
               {{ gitOf(p)!.lastCommit!.subject }}
             </div>
             <div class="g-plugin-commit-meta">
               {{ gitOf(p)!.lastCommit!.author }} · {{ gitOf(p)!.lastCommit!.date }}
             </div>
-          </div>
           </div>
 
           <div class="g-plugin-actions">
@@ -402,6 +429,13 @@ onMounted(() => {
       </Col>
     </Row>
 
+    <!-- 手机上一屏一屏放，剩下的点这里追加，避免一次性建几十张卡片卡住 -->
+    <div v-if="hasMore && !loading" class="g-plugin-more">
+      <Button block @click="loadMore">
+        加载更多（还有 {{ list.length - shownList.length }} 个）
+      </Button>
+    </div>
+
     <Modal
       v-model:open="installOpen"
       title="从 Git 仓库安装插件"
@@ -442,31 +476,12 @@ onMounted(() => {
 
 <style scoped>
 /* git 信息条：分支 + 短 hash + 上次检查时间，字号压小，不跟标签抢注意力 */
-.g-plugin-gitbox {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--g-bg-soft);
-  min-width: 0;
-}
-
-.g-plugin-gitbox > * {
-  min-width: 0;
-}
-
-.g-plugin-gitbox .g-plugin-commit {
-  flex: 0 0 100%;
-}
-
 .g-plugin-git {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
+  margin-top: 6px;
   font-size: 12px;
   color: var(--g-text-sub);
 }
@@ -487,15 +502,15 @@ onMounted(() => {
 
 /* 当前版本那条提交：标题裁成一行，保证卡片高度还是齐的 */
 .g-plugin-commit {
-  margin-top: 4px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--g-bg-soft);
 }
 
 .g-plugin-commit-subject {
   font-size: 12px;
   line-height: 1.5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--g-text-sub);
   overflow: hidden;
   white-space: nowrap;
@@ -503,9 +518,6 @@ onMounted(() => {
 }
 
 .g-plugin-commit-meta {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   margin-top: 2px;
   font-size: 11px;
   color: var(--g-text-dim);
@@ -577,10 +589,22 @@ onMounted(() => {
   margin-left: 5px;
 }
 
+/* 「加载更多」跟上面的卡片栅格拉开一点，别贴在最后一张卡上 */
+.g-plugin-more {
+  margin-top: 16px;
+}
+
 .g-plugin-card {
   height: 100%;
   display: flex;
   flex-direction: column;
+  /**
+   * 插件多的时候（三四十个）切一次筛选要把全部卡片重新排一遍，手机上要卡一两秒。
+   * content-visibility 让屏幕外的卡片跳过布局和绘制，只算看得见的那几张；
+   * contain-intrinsic-size 给个占位高度，切换时滚动条不会乱跳。
+   */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
 }
 
 .g-plugin-card :deep(.ant-card-body) {

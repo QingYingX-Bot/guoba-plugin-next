@@ -124,7 +124,7 @@ const colWidth = computed(() => {
 const wrapWidth = computed(() => Math.min(2500, Math.max(800, colCount.value * colWidth.value + 30)))
 
 const imgTs = ref(Date.now())
-const spriteUrl = computed(() => miaoHelpIconUrl(auth.token, imgTs.value))
+const spriteUrl = computed(() => miaoHelpIconUrl(auth.liteToken || auth.token, imgTs.value))
 const mainUrl = computed(() => miaoThemeMainUrl(previewTheme.value, auth.liteToken || auth.token, imgTs.value))
 const bgUrl = computed(() => miaoThemeBgUrl(previewTheme.value, auth.liteToken || auth.token, imgTs.value))
 

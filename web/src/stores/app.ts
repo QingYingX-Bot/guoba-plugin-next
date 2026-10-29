@@ -15,9 +15,23 @@ import { useAuthStore } from '@/stores/auth'
 export type { ThemeMode }
 
 const SIDEBAR_KEY = 'guoba:sidebar-collapsed'
+const VIEW_MODE_KEY = 'guoba:view-mode'
 
 /** 窄屏断点：侧边栏改为覆盖式抽屉，不再挤占内容宽度 */
 const MOBILE_QUERY = '(max-width: 768px)'
+
+/**
+ * 界面模式。
+ *
+ * auto 跟屏幕宽度走；mobile / pc 是手动强制 —— 手机上想看完整的桌面表格、
+ * 或者平板横屏时想用手机版，都靠它。手动选择存在本地，跨会话保持。
+ */
+export type ViewMode = 'auto' | 'mobile' | 'pc'
+
+function initialViewMode(): ViewMode {
+  const value = localStorage.getItem(VIEW_MODE_KEY)
+  return value === 'mobile' || value === 'pc' ? value : 'auto'
+}
 
 /**
  * 首屏初始值
@@ -48,7 +62,13 @@ export const useAppStore = defineStore('app', () => {
 
   const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_KEY) === '1')
 
-  const isMobile = ref(window.matchMedia(MOBILE_QUERY).matches)
+  const viewMode = ref<ViewMode>(initialViewMode())
+  /** 视口本身窄不窄，跟手动选择无关 */
+  const viewportNarrow = ref(window.matchMedia(MOBILE_QUERY).matches)
+  /** 最终用哪套界面：手动指定优先，auto 时跟视口 */
+  const isMobile = computed(
+    () => viewMode.value === 'mobile' || (viewMode.value === 'auto' && viewportNarrow.value),
+  )
   /** 仅窄屏使用：抽屉是否展开 */
   const drawerOpen = ref(false)
 
@@ -64,7 +84,7 @@ export const useAppStore = defineStore('app', () => {
     if (live.value.themeId !== 'glass') return ''
     const name = live.value.backgrounds[live.value.mode]
     if (!name) return ''
-    const q = new URLSearchParams({ name, token: auth.liteToken || auth.token })
+    const q = new URLSearchParams({ name, token: auth.liteToken })
     return `${API_BASE}/theme/background/image?${q.toString()}`
   })
 
@@ -147,11 +167,19 @@ export const useAppStore = defineStore('app', () => {
   function setupResponsive() {
     const mql = window.matchMedia(MOBILE_QUERY)
     const onChange = (e: MediaQueryList | MediaQueryListEvent) => {
-      isMobile.value = e.matches
+      viewportNarrow.value = e.matches
       drawerOpen.value = false
     }
     mql.addEventListener('change', onChange)
     onChange(mql)
+  }
+
+  /** 换界面模式：抽屉先收起，避免 PC 版留着的抽屉状态串到手机版 */
+  function setViewMode(next: ViewMode) {
+    viewMode.value = next
+    drawerOpen.value = false
+    if (next === 'auto') localStorage.removeItem(VIEW_MODE_KEY)
+    else localStorage.setItem(VIEW_MODE_KEY, next)
   }
 
   watch([live, () => auth.liteToken], applyTheme, { deep: true, immediate: true })
@@ -168,12 +196,15 @@ export const useAppStore = defineStore('app', () => {
     effectivePrimary,
     isDirty,
     sidebarCollapsed,
+    viewMode,
+    viewportNarrow,
     isMobile,
     drawerOpen,
     toggleTheme,
     toggleSidebar,
     closeDrawer,
     setupResponsive,
+    setViewMode,
     previewTheme,
     revert,
     applySaved,

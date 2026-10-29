@@ -13,6 +13,7 @@
 import { computed } from 'vue'
 import { Icon, iconExists } from '@iconify/vue'
 import { withMountPrefix } from '@/utils/env'
+import { useAuthStore } from '@/stores/auth'
 
 const props = withDefaults(
   defineProps<{
@@ -28,7 +29,25 @@ const props = withDefaults(
   { size: 16, fallback: 'ant-design:api-outlined' },
 )
 
+const auth = useAuthStore()
+
 const sizeStyle = (val: number | string) => (typeof val === 'number' ? `${val}px` : val)
+
+/**
+ * 图片地址。插件图标接口需要弱令牌（<img> 带不上请求头），
+ * 令牌还没拿到时先不渲染，等 store 里有了会自动重算。
+ */
+const imgSrc = computed(() => {
+  const raw = typeof props.src === 'string' ? props.src.trim() : ''
+  if (!raw) return ''
+  const url = withMountPrefix(raw)
+  if (/\/api\/plugin\/s\/[^/?#]+\/icon(?:[?#].*)?$/.test(url)) {
+    if (!auth.liteToken) return ''
+    const sep = url.includes('?') ? '&' : '?'
+    return `${url}${sep}token=${encodeURIComponent(auth.liteToken)}`
+  }
+  return url
+})
 
 /** 已内置的图标同步渲染；未内置的由 iconify 运行时拉取，期间/失败时走插槽兜底 */
 const isBundled = computed(() => (props.icon ? iconExists(props.icon) : false))
@@ -42,9 +61,9 @@ const isTextIcon = computed(() => !!props.icon && !props.icon.includes(':'))
 
 <template>
   <img
-    v-if="props.src"
+    v-if="imgSrc"
     class="g-icon-img"
-    :src="withMountPrefix(props.src)"
+    :src="imgSrc"
     :style="{ width: sizeStyle(props.size), height: sizeStyle(props.size) }"
     alt=""
   />
