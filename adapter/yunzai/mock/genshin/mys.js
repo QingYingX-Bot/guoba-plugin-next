@@ -1,14 +1,14 @@
 /**
  * mock MysInfo
+ *
+ * 没装 genshin 时用它顶替：只影响首页的米游社 CK 统计，锅巴其余功能不受影响，所以静默降级。
  */
 export class MysInfo {
   static async getBingCkUid() {
-    log()
     return {}
   }
 
   static async initCache() {
-    log()
     return {}
   }
 }
@@ -18,21 +18,10 @@ export class MysInfo {
  */
 export class MysUser {
   static async getStatData() {
-    log()
     return {
       count: {
         total: -1
       }
     }
   }
-}
-
-let logged = false
-
-function log() {
-  if (logged) {
-    return
-  }
-  logged = true
-  logger.warn('[Guoba] 由于没有安装 genshin 插件，所以无法使用相关功能')
 }
