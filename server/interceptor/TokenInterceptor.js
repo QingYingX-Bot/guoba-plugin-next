@@ -9,6 +9,10 @@ const liteInclude = [
   new RegExp('^/api/custom-page/asset/[^/]+/.+'),
   new RegExp('^/api/plugin-pages/asset/[^/]+/.+'),
   new RegExp('^/api/theme/background/image$'),
+  // Mys-plugin 面板图裁剪弹窗：iframe 导航，以及 iframe 内 CSS 发起的字体请求，
+  // 都带不上请求头。用弱令牌（Cookie）过鉴权，正式登录令牌不进 URL。
+  new RegExp('^/api/custom/[^/]+/panel/live-doc$'),
+  new RegExp('^/api/custom/[^/]+/panel/font/[^/]+$'),
 ]
 
 // 需要拦截的路径
@@ -51,6 +55,8 @@ const exclude = [
   new RegExp('^/api/helper/release_port$'),
   // 插件图标是图片，前端 <img> 带不上请求头，放行不影响鉴权面
   new RegExp('^/api/plugin/s/.+/icon$'),
+  // 注：面板图裁剪工作台（panel/crop）已由 Vue 自实现的弹窗取代，前端不再请求，
+  // 因此不再放行；要恢复得同时加回这里和 liteInclude。
 ]
 
 /**
