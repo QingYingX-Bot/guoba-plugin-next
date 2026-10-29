@@ -14,20 +14,24 @@ const require = createRequire(import.meta.url)
  *
  * 目录关系：
  *   <JiuLi>/plugins/Guoba-Plugin/adapter/yunzai/mock/mys/index.js   ← 本文件
- *   <JiuLi>/data/Mys-plugin/db/data.db                              ← 目标数据库
+ *   <JiuLi>/data/Mys-plugin/data/db/data.db                         ← 目标数据库
+ *
+ * 注意最后那层 data/db：JiuLi 把插件数据放在 <根>/data/<插件名>/ 下，Mys 的 Path.js 又把
+ * 逻辑目录 db 映射成 data/db，所以真实路径比「直觉」多一层。
  */
 const here = path.dirname(fileURLToPath(import.meta.url))
 const guobaRoot = path.resolve(here, '../../../../')        // plugins/Guoba-Plugin
 const pluginsDir = path.dirname(guobaRoot)                  // plugins/
 const hostRoot = path.dirname(pluginsDir)                   // JiuLi 根
-const botRoot = path.resolve(hostRoot, '../../..')           // Bot 根
+const botRoot = path.resolve(hostRoot, '../../../..')        // Bot 根（JiuLi 在 data/adapters/framework 下）
 
-/** 按常见部署位置找 Mys-plugin 的 sqlite 数据库 */
+/** 按常见部署位置找 Mys-plugin 的 sqlite 数据库；先试现行布局，再退回旧的扁平布局 */
 function findDb () {
   const candidates = [
-    path.join(hostRoot, 'data/Mys-plugin/db/data.db'),
-    path.join(botRoot, 'data/Mys-plugin/db/data.db'),
-    path.join(pluginsDir, 'Mys-plugin/data/db/data.db'),
+    path.join(hostRoot, 'data/Mys-plugin/data/db/data.db'),   // JiuLi 现行布局
+    path.join(botRoot, 'data/Mys-plugin/data/db/data.db'),    // JiuLi 装在 Bot 根之下
+    path.join(hostRoot, 'data/Mys-plugin/db/data.db'),        // 旧扁平布局，兜底
+    path.join(pluginsDir, 'Mys-plugin/data/db/data.db'),      // 数据库跟着插件目录走
     path.join(pluginsDir, 'Mys-plugin/db/data.db'),
   ]
   for (const file of candidates) {
