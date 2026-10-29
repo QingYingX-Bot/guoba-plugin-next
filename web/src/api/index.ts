@@ -235,6 +235,10 @@ export interface PluginGitInfo {
   commits?: GitCommit[]
   checked?: boolean
   error?: string
+  /** fork 场景：上游仓库落后多少个提交（0 = 没配上游或没检查过） */
+  upstreamBehind?: number
+  /** fork 场景：上游仓库地址 */
+  upstreamRepo?: string
 }
 
 /** 一个插件的更新日志（本地历史 + 待更新的提交），选版本回滚就从这里挑 */
