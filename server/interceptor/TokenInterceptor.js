@@ -14,7 +14,6 @@ const liteInclude = [
   new RegExp('^/api/sandbox/asset/[^/]+$'),
   new RegExp('^/api/home/random-image$'),
   new RegExp('^/api/custom-page/asset/[^/]+/.+'),
-  new RegExp('^/api/plugin-pages/asset/[^/]+/.+'),
   new RegExp('^/api/theme/background/image$'),
   // Mys-plugin 面板图裁剪弹窗：iframe 导航，以及 iframe 内 CSS 发起的字体请求，
   // 都带不上请求头。用弱令牌（Cookie）过鉴权，正式登录令牌不进 URL。
