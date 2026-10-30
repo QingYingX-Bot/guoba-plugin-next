@@ -136,12 +136,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '插件页面' },
       },
       {
-        path: 'plugin/extra/miao-plugin',
-        name: 'MiaoPlugin',
-        component: () => import('@/views/miao/index.vue'),
-        meta: { title: '喵喵帮助', icon: 'ant-design:heart-outlined' },
-      },
-      {
         // 扩展页面父级菜单，本身不渲染内容
         path: 'custom',
         name: 'CustomPageParent',

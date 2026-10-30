@@ -6,7 +6,7 @@ import moment from 'moment'
 import lodash from 'lodash'
 import fetch from 'node-fetch'
 import {cfg, Constant} from "#guoba.platform"
-import {isV3, isV4, isTRSS} from '#guoba.adapter'
+import {isTRSS} from '#guoba.adapter'
 import {isFakeAccount} from './account.js'
 
 // 判据放在零依赖的 account.js 里，server 的 model 层也要用（见 service/both/model/bots.js）
@@ -46,12 +46,7 @@ export function toPairsMap(arg) {
  * 解析 master 时是 `split(':')` 后把剩下的 `join(':')` 还原的，所以这里拿到的是完整标识。
  */
 async function getMasterList() {
-  let config
-  if (isV3 || isV4) {
-    config = (await import('../../../lib/config/config.js')).default
-  } else {
-    config = BotConfig
-  }
+  const config = (await import('../../../lib/config/config.js')).default
   if (isTRSS) {
     const list = []
     for (const [botId, users] of Object.entries(config.master ?? {})) {

@@ -1,7 +1,7 @@
 import lodash from "lodash";
 import {Preload} from "#guoba.framework";
 import {cfg, _version, Constant, _paths} from "#guoba.platform";
-import {isV3, isV4, yunzaiVersion, hostName} from '#guoba.adapter'
+import {yunzaiVersion, hostName} from '#guoba.adapter'
 import {readTheme} from '../utils/themeConfig.js'
 
 // noinspection JSUnusedGlobalSymbols
@@ -46,7 +46,7 @@ export default class ConfigPreload extends Preload {
       VERSION: yunzaiVersion,
       HOST_NAME: hostName,
       GUOBA_VERSION: _version,
-      API_PREFIX: (isV3 || isV4) ? '/v3' : '/v2',
+      API_PREFIX: '/v3',
       TOKEN_KEY: Constant.TOKEN_KEY,
     })}`
   }

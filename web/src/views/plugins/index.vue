@@ -413,7 +413,7 @@ onMounted(() => {
                 日志
               </Button>
               <Button
-                v-if="p.installed && (p.dir || p.name) !== 'miao-plugin'"
+                v-if="p.installed"
                 size="small"
                 danger
                 @click="confirmUninstall(p)"

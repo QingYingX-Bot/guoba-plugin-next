@@ -22,17 +22,11 @@ function readHostPackage() {
 }
 export const yunzaiPackage = readHostPackage()
 
-// 检查yunzai版本
+// 检查宿主能力（本部署只关心「是不是 TRSS 系」和插件目录探测）
 export const {
-  isV2,
-  isV3,
-  isV4,
   isTRSS,
   hostName,
-  noSupport,
   yunzaiVersion,
-
-  hasGenshin,
 } = checkVersion()
 
 // 是否开发模式
@@ -84,48 +78,10 @@ function readIfExists(file) {
 }
 
 function checkVersion() {
-  let isV2 = false, isV3 = false, isV4 = false, noSupport = false
-
-  let {name, version} = yunzaiPackage ?? {}
-
-  if (version) {
-    if (version.startsWith('2')) {
-      isV2 = true
-    } else if (version.startsWith('3')) {
-      isV3 = true
-    } else if (version.startsWith('4')) {
-      isV4 = true
-    } else {
-      noSupport = true
-    }
-  }
-
-  const isTRSS = detectTRSSLike(name)
-
-  /**
-   * TRSS 系宿主（含 JiuLi）的版本号跟 Miao-Yunzai v4 不是一回事：
-   * JiuLi 4.x 依旧是 TRSS 能力，强行按前缀 4 判成 isV4 会去引 Miao v4 专属的
-   * @yunzaijs/mys，插件直接加载失败。命中 TRSS 能力时统一走 v3 适配。
-   */
-  if (isTRSS) {
-    isV2 = false
-    isV3 = true
-    isV4 = false
-    noSupport = false
-  }
-
-  // v4 need check genshin
-  const hasGenshin = hasPlugin('genshin')
-
+  const {name, version} = yunzaiPackage ?? {}
   return {
-    isV2,
-    isV3,
-    isV4,
-    noSupport,
-    isTRSS,
+    isTRSS: detectTRSSLike(name),
     hostName: name || '',
     yunzaiVersion: version,
-
-    hasGenshin,
   }
 }

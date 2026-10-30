@@ -27,7 +27,6 @@ export class HomeController extends ApiController {
   /** 获取首页数据 */
   async getHomeData() {
     return Result.ok({
-      cookieCount: await this.botService.getCookieCount(),
       friendCount: await this.oicqService.getFriendCount(),
       groupCount: await this.oicqService.getGroupCount(),
     })
@@ -48,22 +47,10 @@ export class HomeController extends ApiController {
     return Result.ok({...stat, bots})
   }
 
-  // 随机角色图片
+  // 随机背景图：往 resources/images/hero/ 丢图即参与随机，目录为空则回落到 no-miao.png
   async randomImage(req, res) {
-    let imgPath = this.getRandomRoleImage()
-    if (imgPath == null) {
-      // 没装喵喵（或素材目录是空的），用锅巴自带的图兜底。
-      // 这些是干净的透明底插画，不用再走 trim
-      const fallback = this.getRandomHeroImage()
-      res.sendFile(fallback ?? path.join(_paths.pluginResources, 'images/no-miao.png'))
-      return Result.VOID
-    }
-    const trimmed = await this.trimImage(imgPath)
-    if (trimmed) {
-      res.type('webp').send(trimmed)
-    } else {
-      res.sendFile(imgPath)
-    }
+    const fallback = this.getRandomHeroImage()
+    res.sendFile(fallback ?? path.join(_paths.pluginResources, 'images/no-miao.png'))
     return Result.VOID
   }
 
@@ -77,36 +64,6 @@ export class HomeController extends ApiController {
    * 裁完结果缓存在内存里，避免同一张图反复解码 —— 面板图最大有 5501×2655，
    * 一次 trim 要几百毫秒。
    */
-  async trimImage(imgPath) {
-    if (!this.trimCache) {
-      this.trimCache = new Map()
-    }
-    if (this.trimCache.has(imgPath)) {
-      return this.trimCache.get(imgPath)
-    }
-    let buffer = null
-    try {
-      const sharp = (await import('sharp')).default
-      buffer = await sharp(imgPath)
-        // 必须先填白再 trim：素材的空白边有的是透明、有的是纯白，
-        // 而 trim 只认左上角一种基准色，不统一的话另一侧的白边裁不掉
-        .flatten({background: '#ffffff'})
-        // threshold 允许边缘有轻微渐变/杂色，纯 0 会漏掉压缩产生的噪点
-        .trim({threshold: 12})
-        // 裁完仍可能很大，限高到 2 倍展示尺寸，省带宽也省前端解码
-        .resize({height: 400, withoutEnlargement: true})
-        .webp({quality: 82})
-        .toBuffer()
-    } catch (e) {
-      logger.warn('[Guoba] 裁剪角色图失败，返回原图：', e.message || e)
-    }
-    // 失败也缓存 null，避免每次请求都重试同一张坏图
-    if (this.trimCache.size > 300) {
-      this.trimCache.clear()
-    }
-    this.trimCache.set(imgPath, buffer)
-    return buffer
-  }
 
   /**
    * 锅巴自带的兜底立绘。
@@ -129,47 +86,5 @@ export class HomeController extends ApiController {
   }
 
   // 安装了喵喵插件后，获取随机角色图片
-  getRandomRoleImage() {
-    if (!this.dirPaths) {
-      let miaoPath = path.join(_paths.root, 'plugins', 'miao-plugin')
-      // 均为「角色名/图片」两层结构，可共用下面的抽样逻辑。
-      // 按优先级取第一个存在的：profile 是面板图素材，数量最多、画质最好，
-      // 后两个仅作为未装该素材时的兜底 —— 若并列参与随机，
-      // 会有相当比例的图仍来自体量小得多的 character-img。
-      this.dirPaths = [
-        path.join(miaoPath, 'resources/profile/normal-character'),
-        path.join(miaoPath, 'resources/character-img'),
-        path.join(miaoPath, 'resources/miao-res-plus/character-img'),
-      ].filter(p => fs.existsSync(p)).slice(0, 1)
-    }
-    if (this.dirPaths.length === 0) {
-      return null
-    }
-    let dirPath = this.dirPaths[0]
-    let rolePaths = []
-    fs.readdirSync(dirPath).forEach(p => rolePaths.push(path.join(dirPath, p)))
-    if (rolePaths.length === 0) {
-      return null
-    }
-    let rolePath = null
-    let picPaths = []
-    for (let i = 0; i < 10; i++) {
-      rolePath = lodash.sample(rolePaths)
-      if (fs.statSync(rolePath).isDirectory()) {
-        picPaths = []
-        fs.readdirSync(rolePath).filter((p) => /\.(jpg|png|jpeg|webp)$/i.test(p)).forEach(p => picPaths.push(path.join(rolePath, p)))
-        // 好可怜，居然一张图片都没有，最多尝试10次
-        if (picPaths.length > 0) {
-          break
-        }
-      } else {
-        rolePath = null
-      }
-    }
-    if (picPaths.length === 0) {
-      return null
-    }
-    return lodash.sample(picPaths)
-  }
 
 }

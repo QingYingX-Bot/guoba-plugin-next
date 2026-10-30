@@ -5,7 +5,6 @@ import {isDev} from '#guoba.adapter'
 import {GitUtils} from '#guoba.utils'
 import {createHotLoad} from '../hotLoad.js'
 import {reload} from './common.js'
-import {loadV2Apps} from './loadV2.js'
 
 export async function init(apps) {
   let appsPath = path.join(_paths.pluginRoot, 'apps')
@@ -13,8 +12,6 @@ export async function init(apps) {
   GitUtils.initRepos()
   // 加载 apps 下的所有类
   await loadClasses(appsPath, plugin, apps)
-  // 加载 v2 插件
-  await loadV2Apps()
   // dev 模式下，监听文件变化，自动重启服务器
   if (isDev) {
     let skip = true

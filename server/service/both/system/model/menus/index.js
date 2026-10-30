@@ -1,5 +1,3 @@
-import {isV2} from '#guoba.adapter'
-
 const {GI} = Guoba.createImport(import.meta.url)
 const {SystemMenus} = await GI('./systemMenus.js')
 const {usePluginsMenu} = await GI('./pluginMenus.js')
@@ -7,7 +5,6 @@ const {useCustomPagesMenu} = await GI('./customPageMenus.js')
 
 // noinspection JSUnusedGlobalSymbols
 export async function useMenuList() {
-  if (isV2) return useMenuListV2()
   const menus = []
   menus.push(SystemMenus.home)
   menus.push(SystemMenus.config)
@@ -24,8 +21,4 @@ export async function useMenuList() {
   menus.push(SystemMenus.theme)
   menus.push(SystemMenus.about)
   return menus
-}
-
-async function useMenuListV2() {
-  return []
 }

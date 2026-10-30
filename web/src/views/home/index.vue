@@ -194,13 +194,6 @@ const stats = computed(() => [
     color: '#3cc2a0',
   },
   {
-    key: 'cookie',
-    title: '公共 Cookie',
-    value: home.value.cookieCount ?? 0,
-    icon: 'ant-design:key-outlined',
-    color: brand.value,
-  },
-  {
     key: 'plugin',
     title: '已装插件',
     value: pluginCount.value ?? 0,
@@ -281,7 +274,7 @@ onBeforeUnmount(() => {
     </Card>
 
     <Row :gutter="[16, 16]" class="g-stat-row">
-      <Col v-for="item in stats" :key="item.key" :xs="12" :sm="12" :md="6">
+      <Col v-for="item in stats" :key="item.key" :xs="12" :sm="12" :md="8">
         <Card :bordered="false" class="g-stat-card">
           <Skeleton v-if="loading" :paragraph="{ rows: 1 }" active />
           <div v-else class="g-stat-inner">

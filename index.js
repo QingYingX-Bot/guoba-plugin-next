@@ -1,4 +1,3 @@
-import {isV3, isV4} from '#guoba.adapter'
 import {checkPackage} from './utils/adapter/check.js'
 import {createImport, GI, GID} from './utils/guobaImport.js'
 
@@ -50,10 +49,6 @@ const apps = {}, rule = {}
 
 let appRouter = null
 
-if (isV3 || isV4) {
-  await (await import('./utils/adapter/initV3.js')).init(apps)
-} else {
-  appRouter = await (await import('./utils/adapter/initV2.js')).init(rule)
-}
+await (await import('./utils/adapter/initV3.js')).init(apps)
 
 export {apps, rule, appRouter}

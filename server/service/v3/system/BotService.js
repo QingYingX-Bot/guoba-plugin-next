@@ -1,40 +1,16 @@
-import { MysInfo, MysUser } from '#guoba.adapter'
-
 const IBotService = await Guoba.GID('#/service/interface/IBotService.js')
 
+/**
+ * 本部署不接 genshin 的「用户 cookie」概念：米游数据全在 Mys-plugin 自己手里，
+ * 首页也不再显示公共 Cookie 数量，这里只保留接口骨架。
+ */
 export class BotService extends IBotService {
   constructor(app) {
     super(app)
   }
 
+  /** 接口要求实现；当前没有消费方，返回空表 */
   async getUserCookies() {
-    return await MysInfo.getBingCkUid()
+    return {}
   }
-
-  /** 获取 cookie 用户数量 */
-  async getCookieCount() {
-    let err
-    // 新版获取方式（调用用户统计）
-    try {
-      err = null
-      await MysInfo.initCache()
-      const stat = await MysUser.getStatData()
-      return stat.count.total
-    } catch (e) {
-      err = e
-    }
-    try {
-      err = null
-      // 旧版获取方式
-      let cookies = await MysInfo.getBingCkUid()
-      return cookies ? Object.keys(cookies).length : '-1'
-    } catch (e) {
-      err = e
-    }
-    if (err) {
-      console.error(err)
-    }
-    return '-1'
-  }
-
 }

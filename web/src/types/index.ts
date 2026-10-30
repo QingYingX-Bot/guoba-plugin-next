@@ -138,7 +138,6 @@ export interface LoginSecurity {
 }
 
 export interface HomeData {
-  cookieCount?: number
   friendCount?: number
   groupCount?: number
 }

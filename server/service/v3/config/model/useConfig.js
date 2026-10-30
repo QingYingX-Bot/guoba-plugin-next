@@ -2,7 +2,7 @@
 import fs from 'fs'
 import path from 'path'
 import loader from '../../../../../../../lib/plugins/loader.js'
-import {hasGenshin, hasPlugin, isTRSS} from '#guoba.adapter'
+import {hasPlugin, isTRSS} from '#guoba.adapter'
 import {_paths} from '#guoba.platform'
 import {isQQBotStorageOwnedByGuoba, QQBOT_STORAGE_DEFAULTS} from '../../../../../utils/qqbotStorage.js'
 
@@ -17,7 +17,6 @@ const CfgAdapter = await (() => {
 const addGroupPromptProps = CfgAdapter['addGroupPromptProps']
 
 // 只有存在 db.yaml 的版本才显示数据库配置卡片
-const hasDbConfig = fs.existsSync(path.join(_paths.root, '/config/config/db.yaml'))
 
 /**
  * 服务器配置放在哪个文件里。
@@ -41,97 +40,6 @@ function serverCards() {
   }))
 }
 
-/**
- * 数据库（Sequelize）配置，对应 config/config/db.yaml。
- * 该配置由 `new Sequelize(cfg.db)` 直接消费（见 plugins/genshin/model/db/BaseModel.js），
- * 所以字段名必须与 Sequelize 的构造参数保持一致。
- */
-const databaseConfig = {
-  key: 'system.db',
-  title: '数据库配置',
-  desc: '机器人数据存储，默认使用SQLite，修改后需重启生效',
-  schemas: [
-    {
-      field: 'dialect',
-      label: '数据库类型',
-      required: true,
-      bottomHelpMessage: '默认SQLite，无需额外部署。改用其他类型需自行安装对应驱动',
-      component: 'Select',
-      componentProps: {
-        options: [
-          {label: 'SQLite', value: 'sqlite'},
-          {label: 'MySQL', value: 'mysql'},
-          {label: 'MariaDB', value: 'mariadb'},
-          {label: 'PostgreSQL', value: 'postgres'},
-          {label: 'SQL Server', value: 'mssql'},
-          {label: 'DB2', value: 'db2'},
-        ],
-        placeholder: '请选择数据库类型',
-      },
-    },
-    {
-      field: 'storage',
-      label: 'SQLite文件路径',
-      bottomHelpMessage: '仅SQLite使用，相对于Yunzai根目录。改动前请先备份原文件',
-      component: 'Input',
-      componentProps: {
-        placeholder: 'data/db/data.db',
-      },
-    },
-    {
-      label: '以下仅在使用 MySQL 等外部数据库时需要填写',
-      component: 'Divider',
-    },
-    {
-      field: 'host',
-      label: '数据库地址',
-      component: 'Input',
-      componentProps: {
-        placeholder: '127.0.0.1',
-      },
-    },
-    {
-      field: 'port',
-      label: '数据库端口',
-      component: 'InputNumber',
-      componentProps: {
-        placeholder: 'MySQL默认3306，PostgreSQL默认5432',
-        min: 1,
-        max: 65535,
-      },
-    },
-    {
-      field: 'database',
-      label: '数据库名',
-      component: 'Input',
-      componentProps: {
-        placeholder: '请输入数据库名',
-      },
-    },
-    {
-      field: 'username',
-      label: '用户名',
-      component: 'Input',
-      componentProps: {
-        placeholder: '请输入用户名',
-      },
-    },
-    {
-      field: 'password',
-      label: '密码',
-      component: 'InputPassword',
-      componentProps: {
-        placeholder: '请输入密码',
-      },
-    },
-    {
-      field: 'logging',
-      label: 'SQL日志',
-      bottomHelpMessage: '开启后会把每条SQL打进日志，排查问题时再开',
-      component: 'Switch',
-    },
-  ],
-}
 
 /**
  * QQBot 相关配置。
@@ -578,7 +486,6 @@ const baseConfig = {
         },
       ],
     },
-    ...(hasDbConfig ? [databaseConfig] : []),
   ],
 }
 
@@ -650,121 +557,6 @@ const groupConfig = () => {
   }
 }
 
-const genshinConfig = {
-  key: 'genshin',
-  title: '原神配置',
-  cards: [
-    {
-      key: 'genshin.mys.set',
-      title: '米游社设置',
-      desc: '',
-      schemas: [
-        {
-          field: 'allowUseCookie',
-          label: '使用用户ck',
-          component: 'Switch',
-          bottomHelpMessage: '公共查询是否使用用户ck',
-          componentProps: {
-            checkedValue: 1,
-            unCheckedValue: 0,
-          },
-        },
-        {
-          field: 'cookieDoc',
-          label: 'ck文档地址',
-          component: 'Input',
-          bottomHelpMessage: '默认cookie帮助文档链接地址',
-          componentProps: {},
-        },
-        {
-          field: 'isAutoSign',
-          label: '开启自动签到',
-          component: 'Switch',
-          bottomHelpMessage: '是否开启米游社原神自动签到',
-          componentProps: {
-            checkedValue: 1,
-            unCheckedValue: 0,
-          },
-        },
-        {
-          field: 'signTime',
-          label: '签到定时任务',
-          component: 'EasyCron',
-          bottomHelpMessage: '米游社原神签到定时任务，Cron表达式，默认00:02开始执行，每10s签到一个',
-          componentProps: {
-            placeholder: '请输入或选择Cron表达式',
-          },
-        },
-        {
-          field: 'abbrSetAuth',
-          label: '别名权限',
-          component: 'RadioGroup',
-          bottomHelpMessage: '别名设置权限',
-          componentProps: {
-            options: [
-              {label: '所有群员都可以添加', value: 0},
-              {label: '群主和管理员才能添加', value: 1},
-              {label: '只有主人才能添加', value: 2},
-            ],
-          },
-        },
-      ],
-    },
-    {
-      key: 'genshin.mys.pubCk',
-      title: '公共Cookie',
-      desc: '米游社公共查询cookie，允许添加多个',
-      // 数组form
-      type: 'arrayFormCard',
-      allowAdd: true,
-      allowDel: true,
-      addBtnText: '添加Cookie',
-      lengthMin: 1,
-      schemas: [],
-    },
-    {
-      key: 'genshin.gacha',
-      title: `十连配置（{{form.key === 'default' ? '默认' : form.key}}）`,
-      desc: '十连次数、概率等相关配置',
-      type: 'keyFormCard',
-      allowAdd: true,
-      allowDel: true,
-      addBtnText: '新增群单独配置',
-      promptProps: addGroupPromptProps,
-      schemas: [
-        {
-          field: 'count',
-          label: '每日抽卡数',
-          bottomHelpMessage: '设置每天可以抽多少次',
-          component: 'InputNumber',
-          componentProps: {
-            min: 1,
-            placeholder: '请输入每日抽卡数',
-          },
-        },
-        {
-          field: 'delMsg',
-          label: '自动撤回',
-          bottomHelpMessage: '自动撤回未出货的抽卡消息，0-120 秒，0 = 不撤回',
-          component: 'InputNumber',
-          componentProps: {
-            placeholder: '请输入自动撤回时间',
-          },
-        },
-        {
-          field: 'LimitSeparate',
-          label: '分开计算',
-          bottomHelpMessage: '角色池、武器池限制次数是否分开计算',
-          component: 'Switch',
-          componentProps: {
-            checkedValue: 1,
-            unCheckedValue: 0,
-          },
-        },
-      ],
-    },
-  ],
-}
 
 const otherConfig = {
   key: 'other',
@@ -853,9 +645,6 @@ export function getConfigTabs() {
   if (qqbot.cards.length) {
     tabs.push(qqbot)
   }
-  if (hasGenshin) {
-    tabs.push(genshinConfig)
-  }
   tabs.push(otherConfig)
   return tabs
 }
@@ -872,8 +661,4 @@ export const configFile = {
   // QQBot 插件的配置文件，卡片只在装了 QQBot-Plugin 时才会出现
   [qqbotPluginKey]: qqbotPluginFile,
 
-  'genshin.gacha': '/plugins/genshin/config/gacha.set.yaml',
-  'genshin.mys.pubCk': '/plugins/genshin/config/mys.pubCk.yaml',
-  'genshin.mys.set': '/plugins/genshin/config/mys.set.yaml',
-  'genshin.role.name': '/plugins/genshin/config/role.name.yaml',
 }

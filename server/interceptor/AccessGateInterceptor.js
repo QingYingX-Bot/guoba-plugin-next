@@ -30,12 +30,6 @@ const PROTECTED = [
   /^\/api\/plugin\/do(\/|$)/,
   // 用 .* 而不是 [^/]+：%2F 解码后会多出斜杠，插件名非法但路由仍能命中
   /^\/api\/plugin\/s\/.*\/config(\/|$)/,
-  // 喵喵帮助的写入类接口（配置、皮肤、备份）；图片与列表读取不拦
-  /^\/api\/plugin\/miao\/help\/?$/,
-  /^\/api\/plugin\/miao\/help\/preview\/?$/,
-  /^\/api\/plugin\/miao\/help\/theme\/config\/?$/,
-  /^\/api\/plugin\/miao\/help\/theme\/action(_put)?\/?$/,
-  /^\/api\/plugin\/miao\/help\/backup(\/|$)/,
   // 备份还原会覆盖代码和配置
   /^\/api\/backup(\/|$)/,
   // 配置写入能改主人、端口、密钥

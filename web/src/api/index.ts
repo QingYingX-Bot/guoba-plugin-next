@@ -1766,5 +1766,4 @@ export function backupDownloadUrl(file: string, ticket: string) {
 export const apiCreateMediaTicket = (scope: 'chat' | 'backup' | 'file') =>
   post<{ ticket: string; ttl: number }>('/media-ticket', { scope })
 
-export * from './miao'
 export { request, get, post, put, del } from './request'

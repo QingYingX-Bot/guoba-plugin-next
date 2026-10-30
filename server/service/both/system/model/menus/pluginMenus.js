@@ -86,9 +86,6 @@ export async function usePluginsMenu() {
       },
     })
   }
-  // 喵喵插件额外功能
-  pluginMenus.push(...(await useMiaoPluginMenu()))
-
   if (pluginMenus.length > 0) {
     return [
       pluginsStoreMenu,
@@ -113,40 +110,6 @@ export async function usePluginsMenu() {
   }
 }
 
-const miaoMenu = {
-  path: '/plugin/extra/miao-plugin',
-  name: 'MiaoPlugin',
-  component: '/guoba/plugins/extra-config/miao-plugin/index',
-  meta: {
-    title: '喵喵帮助',
-    icon: 'ant-design:heart-outlined',
-  },
-}
 
-const miaoV1Menu = {
-  path: miaoMenu.path,
-  name: miaoMenu.name,
-  component: '/guoba/plugins/extra-config/miao-plugin-v1/index',
-  meta: {
-    ...miaoMenu.meta,
-  },
-}
 
 // 喵喵帮助菜单
-async function useMiaoPluginMenu() {
-  // 判断是否安装了喵喵插件
-  if (PluginsMap.get('miao-plugin')) {
-    // 判断喵喵插件版本
-    try {
-      let miaoVersion = (await import('../../../../../../../miao-plugin/components/Version.js')).default
-      if (miaoVersion.version.startsWith('1')) {
-        return [miaoV1Menu]
-      } else {
-        return [miaoMenu]
-      }
-    } catch (e) {
-      logger.error(e)
-    }
-  }
-  return []
-}
