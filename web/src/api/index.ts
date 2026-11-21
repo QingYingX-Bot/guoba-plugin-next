@@ -179,8 +179,8 @@ export const apiRemoveCardForm = (formKey: string, cardKey: string) =>
 
 /* ---------------- 插件 ---------------- */
 
-export const apiGetPlugins = (force = false) =>
-  get<PluginItem[]>('/plugin/list', { force })
+export const apiGetPlugins = (force = false, remote = true) =>
+  get<PluginItem[]>('/plugin/list', { force, remote })
 
 export const apiGetPluginReadme = (link: string, force = false) =>
   get<string>('/plugin/readme', { link, force })
@@ -323,6 +323,75 @@ export const apiPluginUpdateRollback = (body: {
 }) => post<{ name: string; commit: string; from: string; back: boolean }>(
   '/plugin/update/rollback', body, { showSuccess: true },
 )
+
+/** 一个 git remote 的配置（对应 .git/config 里的 remote.<name>.*） */
+export interface PluginRemote {
+  name: string
+  /** 第一条拉取地址（fetch 用它），编辑框显示的是真值 */
+  url: string
+  /** 全部拉取地址；第 2 条起是备用，git 不会自动切过去。展示用，可能已打码 */
+  urls: string[]
+  /** fetch refspec，例如 +refs/heads/*:refs/remotes/origin/* */
+  fetch: string[]
+  /** 单独配的推送地址（remote set-url --add --push），没有就是空数组 */
+  pushurl: string[]
+}
+
+/** 一个插件的全部 remote */
+export interface PluginRemotes {
+  name: string
+  branch: string
+  detached: boolean
+  /** 当前分支上游挂在哪个 remote 上 */
+  remote: string
+  remotes: PluginRemote[]
+}
+
+/** 插件的 remote 列表，不联网 */
+export const apiPluginRemotes = (name: string) =>
+  get<PluginRemotes>('/plugin/update/remotes', { name })
+
+/** 改一个 remote 的仓库地址 */
+export const apiPluginSetRemote = (body: { name: string; remote: string; url: string }) =>
+  post<{ name: string; remote: string; url: string }>('/plugin/update/remote', body, {
+    showSuccess: true,
+  })
+
+/** 新增一个 remote */
+export const apiPluginAddRemote = (body: { name: string; remote: string; url: string }) =>
+  post<{ name: string; remote: string; url: string }>('/plugin/update/remote/add', body, {
+    showSuccess: true,
+  })
+
+/** 删除一个 remote */
+export const apiPluginRemoveRemote = (body: { name: string; remote: string }) =>
+  post<{ name: string; remote: string; wasUpstream: boolean }>('/plugin/update/remote/remove', body, {
+    showSuccess: true,
+  })
+
+/** 给 remote 追加一条推送地址（可以带账号令牌） */
+export const apiPluginAddPushUrl = (body: { name: string; remote: string; url: string }) =>
+  post<{ name: string; remote: string; url: string }>('/plugin/update/remote/pushurl/add', body, {
+    showSuccess: true,
+  })
+
+/** 按序号删掉一条推送地址 */
+export const apiPluginRemovePushUrl = (body: { name: string; remote: string; index: number }) =>
+  post<{ name: string; remote: string; removed: string }>(
+    '/plugin/update/remote/pushurl/remove', body, { showSuccess: true },
+  )
+
+/** 给 remote 追加一条备用拉取地址（git fetch 仍然只用第一条） */
+export const apiPluginAddFetchUrl = (body: { name: string; remote: string; url: string }) =>
+  post<{ name: string; remote: string; url: string }>('/plugin/update/remote/url/add', body, {
+    showSuccess: true,
+  })
+
+/** 按序号删掉一条备用拉取地址（第一条不给删） */
+export const apiPluginRemoveFetchUrl = (body: { name: string; remote: string; index: number }) =>
+  post<{ name: string; remote: string; removed: string }>(
+    '/plugin/update/remote/url/remove', body, { showSuccess: true },
+  )
 
 export const apiGetPluginConfig = (pluginName: string) =>
   get<any>(`/plugin/s/${encodeURIComponent(pluginName)}/config`)
@@ -1026,6 +1095,8 @@ export interface ChatSession extends ChatActiveItem {
   pinned?: boolean
   /** 已被拉黑，列表上给个标记 */
   blacklisted?: boolean
+  /** 不是好友的私聊（群临时会话 / 陌生人），由收到过的消息补进列表 */
+  temp?: boolean
 }
 
 export interface ChatMsg {
@@ -1157,6 +1228,42 @@ export const apiChatGroupInfo = (params: { botId: string; id: string }) =>
 
 export const apiChatUserInfo = (params: { botId: string; id: string }) =>
   get<ChatUserInfo>('/chat/user-info', params, { showError: false })
+
+/**
+ * 群成员信息：消息记录里点头像的信息卡补的「入群时间」。
+ *
+ * 消息事件里不带你得单独问适配器，所以只在卡片打开时调，别在消息列表里批量请求。
+ */
+export interface ChatMemberInfo {
+  userId: string
+  /** 秒，0 表示取不到 */
+  joinTime: number
+  /** 个性签名，空串表示取不到或没设置 */
+  sign: string
+  /** 取不到时的原因，空串表示拿到了 */
+  liveError: string
+}
+
+export const apiChatMemberInfo = (params: {
+  botId: string
+  groupId: string
+  userId: string
+}) => get<ChatMemberInfo>('/chat/member-info', params, { showError: false })
+
+/** 群成员：输入框打 @ 时弹出的昵称索引 */
+export interface ChatMember {
+  userId: string
+  /** 群名片优先，缺了用昵称 */
+  name: string
+  card: string
+  role: string
+}
+
+export const apiChatMembers = (params: {
+  botId: string
+  groupId: string
+  keyword?: string
+}) => get<{ list: ChatMember[]; total: number }>('/chat/members', params, { showError: false })
 
 /** 刷新群信息：跳过缓存强制问一次适配器，返回的是同一份结构 */
 export const apiChatRefreshGroup = (body: { botId: string; id: string }) =>

@@ -4,15 +4,9 @@ import {lookup as dnsLookup} from 'node:dns/promises'
 import {autowired, GuobaError, Service} from '#guoba.framework'
 import {AssetStore, flattenOneBot, normalizeMsg, toBase64File} from './model/msgSegment.js'
 import {groupAvatarUrl, userAvatarUrl} from './model/avatar.js'
-import {listBots, ensureContacts} from './model/bots.js'
-import {
-  getNote,
-  isPinned,
-  setPinned,
-  isBlacklisted,
-  setBlacklisted,
-  setNote,
-} from './model/chatPrefs.js'
+import {listBots, ensureContacts, botOf, listContacts, hasContact} from './model/bots.js'
+import {getNote, isPinned, setPinned, isBlacklisted, setBlacklisted, setNote} from './model/chatPrefs.js'
+import {listTempSessions, rememberTempSession} from './model/chatTempSessions.js'
 import {mirrorGroupBlacklist} from './model/qqbotBlacklist.js'
 import {packetSupport} from './model/packetSupport.js'
 import {describeSendError} from './model/sendError.js'
@@ -219,6 +213,29 @@ const USER_INFO_ACTIONS = ['get_friend_info', 'get_stranger_info']
 const USER_LIVE_TTL = GROUP_LIVE_TTL
 
 /**
+ * 群成员信息（点头像卡片里的「入群时间」）的候选键名。
+ *
+ * 消息事件本身不带入群时间，只能点开卡片时现问适配器：icqq 的 `getInfo()` 与
+ * OneBot 的 `get_group_member_info` 都叫 `join_time`，QQ 官方那边叫 `joined_at`，
+ * 其余别名是给别的实现留的。
+ */
+const MEMBER_INFO_FIELDS = {
+  joinTime: [
+    'join_time', 'joinTime', 'join_time_stamp', 'joinTimeStamp',
+    'join_group_time', 'joinGroupTime', 'join_at', 'joinAt', 'joined_at', 'joinedAt',
+  ],
+  /** 个性签名不是群成员接口给的，得单独问 get_stranger_info，见 #fetchSign */
+  sign: ['longNick', 'long_nick', 'sign', 'signature', 'personalSign', 'personality'],
+}
+/** 成员信息现取的缓存：成功 5 分钟，失败 30 秒（失败重试别太勤，也别让刚入群的看不到） */
+const MEMBER_LIVE_TTL = 5 * 60 * 1000
+const MEMBER_LIVE_MISS_TTL = 30 * 1000
+/** 群成员列表缓存多久。@ 索引是边打边过滤，一分钟内不重复问协议端 */
+const MEMBER_LIST_TTL = 60 * 1000
+/** 一次最多回多少个成员，大群全量塞给前端没必要 */
+const MAX_MEMBER_LIST = 500
+
+/**
  * 在响应里按候选键名找值，可以往下钻几层。
  *
  * 默认只要标量（群名、人数这些都是），`allowArray` 打开后才认数组 ——
@@ -251,6 +268,24 @@ function textOf(source, keys) {
 function numOf(source, keys) {
   const hit = Number(probeFields(source, keys))
   return Number.isFinite(hit) && hit > 0 ? Math.round(hit) : 0
+}
+
+/**
+ * 入群时间归一成秒。
+ *
+ * OneBot / icqq 给的是秒，个别实现给毫秒，QQ 官方给 ISO 字符串 —— 三种都收，
+ * 认不出返回 0。
+ */
+function joinTimeOf(source) {
+  const raw = probeFields(source, MEMBER_INFO_FIELDS.joinTime)
+  if (raw == null || raw === '') return 0
+  if (typeof raw === 'string' && !/^\d+(\.\d+)?$/.test(raw.trim())) {
+    const at = Date.parse(raw)
+    return Number.isFinite(at) && at > 0 ? Math.floor(at / 1000) : 0
+  }
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.floor(n > 1e12 ? n / 1000 : n)
 }
 
 /**
@@ -457,6 +492,15 @@ export default class ChatService extends Service {
    * 见 {@link ChatService#userInfo}。
    */
   #userLiveCache = new Map()
+  /**
+   * 现取的群成员信息缓存：`botId:群号:QQ` -> {at, data}。
+   *
+   * 点一次头像问一次适配器，同一个人来回点没必要每次都问；失败的也留一小会儿，
+   * 免得协议端不支持时每点一下都卡一下。
+   */
+  #memberLiveCache = new Map()
+  /** 群成员列表缓存：`botId:群号` -> {at, list}，@ 索引和群成员查询共用 */
+  #memberListCache = new Map()
   #handler = null
   #attached = false
 
@@ -556,6 +600,26 @@ export default class ChatService extends Service {
       sender,
       segments,
     }, {unread: !self})
+    /**
+     * 非好友私聊落一份盘：临时会话只活在收到的消息里，不进 `bot.fl`，
+     * 不存的话重启就没了。好友表可能还没加载，先记下来，展示时再按好友表过滤。
+     */
+    if (type === 'friend' && !self) {
+      // 按收到消息的这个账号判断：同一个人可能只是别的号的好友，拿全局表会漏记本号的临时会话
+      const isFriend = hasContact(botId, 'friend', id)
+      if (!isFriend) {
+        const active = this.#sessions.get(`${botId}:friend:${id}`)
+        rememberTempSession({
+          key: `${botId}:friend:${id}`,
+          botId,
+          userId: id,
+          name: sender.nickname || sender.card || '',
+          lastTime: active?.lastTime ?? Math.floor(Date.now() / 1000),
+          lastText: active?.lastText ?? '',
+          groupId: String(e.group_id ?? ''),
+        })
+      }
+    }
     // 事件里的原始数据比历史接口给的全（有上报原文），后来的以它为准
     if (messageId) {
       const upload = this.#parseUpload(e)
@@ -1016,7 +1080,7 @@ export default class ChatService extends Service {
       if (!qqbot) return ''
       // 私聊：直接问好友表，别指望对方发过言
       if (!groupId) {
-        const friend = textOf(this.#friendEntry(String(uin)), USER_INFO_FIELDS.name)
+        const friend = textOf(this.#friendEntry(String(uin), botId), USER_INFO_FIELDS.name)
         if (friend) return friend
       }
       return this.#names.get(String(uin)) || ''
@@ -1235,12 +1299,17 @@ export default class ChatService extends Service {
     const isGroup = type !== 'friend'
     // 适配器连接时那次拉取可能没成功，缓存空着就先补一次，见 ensureContacts
     await ensureContacts(isGroup ? 'group' : 'friend', botId)
-    const map = (isGroup ? Bot.getGroupMap?.() : Bot.getFriendMap?.()) ?? new Map()
+    /**
+     * 按账号展开，不能用 `Bot.getGroupMap()` / `getFriendMap()`：它们是 `Map<号码, 信息>`，
+     * 几个号都在同一个群（或加了同一个人）时号码相同，后遍历到的账号会把前一个顶掉 ——
+     * 那个群就只在其中一个号下面出现，其余号里直接搜不到。
+     */
+    const contacts = listContacts(isGroup ? 'group' : 'friend')
     const kw = String(keyword ?? '').trim().toLowerCase()
     const wantBot = String(botId ?? '').trim()
 
     const list = []
-    for (const [id, info] of map) {
+    for (const [id, info] of contacts) {
       const owner = String(info?.bot_id ?? '')
       if (wantBot && owner !== wantBot) continue
       const sid = String(id)
@@ -1272,6 +1341,59 @@ export default class ChatService extends Service {
         pinned: isPinned(key),
         blacklisted: isBlacklisted(key),
       })
+    }
+
+    /**
+     * 私聊列表补上「临时会话」。
+     *
+     * 好友表（`bot.fl`）里只有加过好友的人，群临时会话 / 陌生人私聊根本不在里面。
+     * 收到过的会落进 chatTempSessions 的 JSON（内存活跃表只在本进程里有效，重启就没了），
+     * 这里把「持久化的 + 本进程刚收到的」合起来，再滤掉已经是好友的，前端标一个「临时」。
+     */
+    if (!isGroup) {
+      const tempMap = new Map()
+      for (const item of listTempSessions(wantBot)) tempMap.set(item.key, {...item})
+      for (const [activeKey, active] of this.#sessions) {
+        const matched = /^([^:]+):friend:(.+)$/.exec(activeKey)
+        if (!matched) continue
+        if (wantBot && matched[1] !== wantBot) continue
+        const old = tempMap.get(activeKey)
+        tempMap.set(activeKey, {
+          key: activeKey,
+          botId: matched[1],
+          userId: matched[2],
+          name: old?.name || this.#names.get(matched[2]) || matched[2],
+          lastTime: active.lastTime,
+          lastText: active.lastText,
+          unread: active.unread,
+        })
+      }
+      // 好友去重按账号：这个人可能只是别的号的好友，不能因此把本号的临时会话吞掉
+      const friendKeys = new Set()
+      for (const [id, info] of contacts) friendKeys.add(`${info.bot_id}:${id}`)
+      for (const [activeKey, item] of tempMap) {
+        const sid = String(item.userId ?? '')
+        if (!sid) continue
+        // 已经是这个账号的好友了，交给上面好友表那一路，这里不重复
+        if (friendKeys.has(`${item.botId}:${sid}`)) continue
+        const name = item.name || this.#names.get(sid) || sid
+        if (kw && !name.toLowerCase().includes(kw) && !sid.includes(kw)) continue
+        list.push({
+          key: activeKey,
+          botId: item.botId,
+          type: 'friend',
+          id: sid,
+          name,
+          note: getNote(activeKey),
+          avatar: userAvatarUrl(sid, item.botId),
+          lastTime: item.lastTime ?? 0,
+          lastText: item.lastText ?? '',
+          unread: item.unread ?? 0,
+          pinned: isPinned(activeKey),
+          blacklisted: isBlacklisted(activeKey),
+          temp: true,
+        })
+      }
     }
 
     // 置顶的排最前（且不受有没有消息影响），其余按最近活跃，最后按号码 —— 顺序稳定不跳动
@@ -2094,7 +2216,7 @@ export default class ChatService extends Service {
     const owner = String(botId ?? '').trim()
     const bot = this.#bot(owner)
     const key = sessionKey(owner, 'group', gid)
-    const entry = this.#groupEntry(gid)
+    const entry = this.#groupEntry(gid, owner)
     const qqbot = isQQBot(bot)
 
     let live = null
@@ -2194,7 +2316,7 @@ export default class ChatService extends Service {
     const owner = String(botId ?? '').trim()
     const bot = this.#bot(owner)
     const key = sessionKey(owner, 'friend', uid)
-    const entry = this.#friendEntry(uid)
+    const entry = this.#friendEntry(uid, owner)
     const qqbot = isQQBot(bot)
 
     let live = null
@@ -2250,9 +2372,203 @@ export default class ChatService extends Service {
     return this.userInfo({botId, id, refresh: true})
   }
 
-  /** 面板记录的那份好友信息（`bot.fl` 里的一条） */
-  #friendEntry(uid) {
-    const map = Bot.getFriendMap?.()
+  /**
+   * 群成员列表：输入框里打 @ 时的昵称索引。
+   *
+   * 两档取法：群对象上的成员表（icqq 这类）→ OneBot 的 `get_group_member_list`。
+   * 拉一次缓存一分钟，关键词在本地过滤，输入过程中不再反复问协议端。
+   */
+  async groupMembers({botId = '', groupId = '', keyword = ''} = {}) {
+    const gid = String(groupId ?? '').trim()
+    if (!gid) throw new GuobaError('缺少群号')
+    const owner = String(botId ?? '').trim()
+    const bot = this.#bot(owner)
+    if (!bot) throw new GuobaError('找不到这个机器人账号')
+    const cacheKey = `${owner}:${gid}`
+    let hit = this.#memberListCache.get(cacheKey)
+    if (!hit || Date.now() - hit.at >= MEMBER_LIST_TTL) {
+      const list = await this.#fetchGroupMembers(bot, gid)
+      hit = {at: Date.now(), list}
+      this.#memberListCache.set(cacheKey, hit)
+    }
+    const kw = String(keyword ?? '').trim().toLowerCase()
+    const list = kw
+      ? hit.list.filter((m) =>
+        m.name.toLowerCase().includes(kw)
+        || m.card.toLowerCase().includes(kw)
+        || m.userId.includes(kw))
+      : hit.list
+    return {list: list.slice(0, MAX_MEMBER_LIST), total: list.length}
+  }
+
+  /** 取整份群成员表，统一成 `{userId, name, card, role}` */
+  async #fetchGroupMembers(bot, gid) {
+    const groupId = Number(gid) || gid
+    const out = []
+    const seen = new Set()
+    const push = (uid, card, nickname, role) => {
+      const id = String(uid ?? '').trim()
+      if (!id || seen.has(id)) return
+      seen.add(id)
+      // 群名片常常是一串空格，trim 后为空就该退回昵称 / QQ 号
+      const cleanCard = String(card ?? '').trim()
+      const cleanNick = String(nickname ?? '').trim()
+      out.push({
+        userId: id,
+        name: cleanCard || cleanNick || id,
+        card: cleanCard,
+        role: String(role ?? ''),
+      })
+    }
+
+    try {
+      const group = typeof bot.pickGroup === 'function' ? bot.pickGroup(groupId) : null
+      if (typeof group?.getMemberMap === 'function') {
+        const map = await group.getMemberMap()
+        for (const member of map instanceof Map ? map.values() : map ?? []) {
+          const info = member?.info ?? member
+          push(
+            info?.user_id ?? member?.user_id,
+            info?.card ?? member?.card,
+            info?.nickname ?? member?.nickname,
+            info?.role ?? member?.role,
+          )
+        }
+      }
+    } catch {
+      // 群对象上没这张表（多数 OneBot 实现），走下面的接口
+    }
+
+    if (!out.length && typeof bot.sendApi === 'function') {
+      const res = await bot.sendApi('get_group_member_list', {group_id: groupId})
+      const data = res?.data ?? res
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          push(item?.user_id, item?.card, item?.nickname, item?.role)
+        }
+      }
+    }
+
+    if (!out.length) throw new GuobaError('这个适配器取不到群成员列表')
+    out.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'))
+    return out
+  }
+
+  /**
+   * 群成员信息：消息记录里点头像弹出的信息卡补的「入群时间」。
+   *
+   * 消息事件里不带入群时间，只能点开卡片时现问适配器：先走群对象上的成员
+   * （icqq 的 `getInfo()` 等），不行再退 OneBot 的标准动作 `get_group_member_info`；
+   * QQ 官方机器人走 SDK 的 `getGroupMemberInfo`。
+   *
+   * 取不到不算错 —— 返回空时间 + liveError，卡片上如实写一句，别整张卡打不开。
+   */
+  async memberInfo({botId = '', groupId = '', userId = ''} = {}) {
+    const gid = String(groupId ?? '').trim()
+    const uid = String(userId ?? '').trim()
+    if (!gid) throw new GuobaError('缺少群号')
+    if (!uid) throw new GuobaError('缺少成员 QQ')
+    const owner = String(botId ?? '').trim()
+    const bot = this.#bot(owner)
+    const cacheKey = `${owner || 'default'}:${gid}:${uid}`
+
+    const hit = this.#memberLiveCache.get(cacheKey)
+    const ttl = hit?.data?.joinTime ? MEMBER_LIVE_TTL : MEMBER_LIVE_MISS_TTL
+    if (hit && Date.now() - hit.at < ttl) return hit.data
+
+    let live = null
+    let liveError = ''
+    try {
+      live = bot && isQQBot(bot)
+        ? await this.#fetchQQBotMemberInfo(bot, gid, uid)
+        : await this.#fetchMemberInfo(bot, gid, uid)
+    } catch (err) {
+      liveError = err?.message ?? String(err)
+    }
+
+    const joinTime = joinTimeOf(live)
+    // 签名不在群成员信息里，NapCat / Lagrange 的 get_stranger_info 才有（longNick）
+    const sign = await this.#fetchSign(bot, uid)
+    const data = {
+      userId: uid,
+      /** 秒，0 表示取不到 */
+      joinTime,
+      /** 个性签名，取不到是空串 */
+      sign,
+      liveError: joinTime ? '' : (liveError || '这个适配器没给入群时间'),
+    }
+    this.#memberLiveCache.set(cacheKey, {at: Date.now(), data})
+    return data
+  }
+
+  /** 问适配器要个性签名：NapCat / Lagrange 的 get_stranger_info 会给 longNick */
+  async #fetchSign(bot, uid) {
+    if (typeof bot?.sendApi !== 'function') return ''
+    const userId = Number(uid) || uid
+    for (const action of ['get_stranger_info', 'get_friend_info']) {
+      try {
+        const res = await bot.sendApi(action, {user_id: userId, no_cache: true})
+        const data = res?.data ?? res
+        if (!data || typeof data !== 'object') continue
+        const sign = probeFields(data, MEMBER_INFO_FIELDS.sign)
+        if (sign != null) return String(sign).trim()
+      } catch {
+        // 协议端不认这个动作就试下一个；都拿不到就空着
+      }
+    }
+    return ''
+  }
+
+  /** 问适配器要一个群成员的详情，两档：群对象上的成员 → OneBot 动作 */
+  async #fetchMemberInfo(bot, gid, uid) {
+    if (!bot) throw new GuobaError('找不到这个机器人账号')
+    const groupId = Number(gid) || gid
+    const userId = Number(uid) || uid
+    let member = null
+    try {
+      const group = typeof bot.pickGroup === 'function' ? bot.pickGroup(groupId) : null
+      member = typeof group?.pickMember === 'function' ? group.pickMember(userId) : null
+    } catch {
+      member = null
+    }
+    if (member) {
+      try {
+        const info = typeof member.getInfo === 'function' ? await member.getInfo()
+          : typeof member.getGroupMemberInfo === 'function' ? await member.getGroupMemberInfo()
+            : member.info
+        if (info && typeof info === 'object') return info
+      } catch {
+        // 成员对象这条路走不通（不在群、适配器没实现），落到下面问接口
+      }
+    }
+    if (typeof bot.sendApi === 'function') {
+      const res = await bot.sendApi('get_group_member_info', {group_id: groupId, user_id: userId})
+      const data = res?.data ?? res
+      if (data && typeof data === 'object') return data
+    }
+    throw new GuobaError('当前适配器取不到成员信息')
+  }
+
+  /** QQ 官方机器人的成员信息：SDK 上是 `getGroupMemberInfo(群 openid, 成员 openid)` */
+  async #fetchQQBotMemberInfo(bot, gid, uid) {
+    const sdk = this.#qqbotSdk(bot)
+    if (typeof sdk?.getGroupMemberInfo !== 'function') {
+      throw new GuobaError('当前 QQ 机器人没接上 SDK，取不到成员信息')
+    }
+    const groupOpenid = pureOpenid(gid)
+    const memberOpenid = pureOpenid(uid)
+    if (!groupOpenid || !memberOpenid) {
+      throw new GuobaError('群或成员的 openid 是空的，取不到成员信息')
+    }
+    const data = await sdk.getGroupMemberInfo(groupOpenid, memberOpenid)
+    if (!data || typeof data !== 'object') throw new GuobaError('QQ 那边没回成员信息')
+    return data
+  }
+
+  /** 面板记录的那份好友信息（`bot.fl` 里的一条）；指定账号时只读它自己那份 */
+  #friendEntry(uid, botId = '') {
+    // 多号加了同一个人时全局表只剩最后那个号的条目，按账号读才拿得对
+    const map = botId ? botOf(botId)?.fl : Bot.getFriendMap?.()
     if (!(map instanceof Map)) return null
     // 键可能是数字（OneBot 的 QQ 号）也可能是字符串（QQBot 的复合 id），两边都试一下
     const entry = map.get(Number(uid) || uid) ?? map.get(String(uid))
@@ -2366,9 +2682,10 @@ export default class ChatService extends Service {
     return {key, blacklisted: !!blacklisted, saved, mirrored, note}
   }
 
-  /** 面板记录的那份群信息（`bot.gl` 里的一条） */
-  #groupEntry(gid) {
-    const map = Bot.getGroupMap?.()
+  /** 面板记录的那份群信息（`bot.gl` 里的一条）；指定账号时只读它自己那份 */
+  #groupEntry(gid, botId = '') {
+    // 多号同群时全局表只剩最后那个号的条目，按账号读才拿得对
+    const map = botId ? botOf(botId)?.gl : Bot.getGroupMap?.()
     if (!(map instanceof Map)) return null
     const entry = map.get(Number(gid) || gid)
     return entry && typeof entry === 'object' ? entry : null

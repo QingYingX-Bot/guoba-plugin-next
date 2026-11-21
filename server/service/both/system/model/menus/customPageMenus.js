@@ -1,6 +1,7 @@
 import {autowired} from '#guoba.framework'
 import {GuobaSupportMap} from '#guoba.platform'
 import {getPluginIconPath} from '../../../../../utils/pluginUtils.js'
+import {_paths} from '#guoba.platform'
 
 /**
  * 自定义页面的菜单。
@@ -8,6 +9,7 @@ import {getPluginIconPath} from '../../../../../utils/pluginUtils.js'
  * 「扩展页面」下固定有一个「页面管理」入口（在面板里建页面用），
  * 后面跟着已注册的页面 —— 插件的和面板里建的都在这。
  * icon 允许直接写 emoji，前端 GIcon 认不出 iconify 名时会按文本渲染。
+ * 插件页面可显式启用 usePluginIcon，复用插件图标与已有弱令牌鉴权。
  */
 export async function useCustomPagesMenu() {
   const customPageService = autowired('customPageService')
@@ -34,6 +36,14 @@ export async function useCustomPagesMenu() {
     },
     guobaMeta: {
       customPage: {id: page.id, source: page.source, pluginName: page.pluginName},
+      ...(page.usePluginIcon && page.source === 'plugin' && page.pluginName
+        ? {
+          plugin: {
+            icon: page.icon || 'ant-design:file-text-outlined',
+            iconPath: `${_paths.server.realMountPrefix}/api/plugin/s/${encodeURIComponent(page.pluginName)}/icon`,
+          },
+        }
+        : {}),
     },
   })
   const groups = new Map()

@@ -1,3 +1,4 @@
+import * as Vue from 'vue'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import Antd from 'ant-design-vue'
@@ -6,6 +7,9 @@ import router from './router'
 import { bindAuthToRequest } from './stores/auth'
 import { useGateStore } from './stores/gate'
 import { setGateBlockedHandler, setGateTokenGetter, setFrozenHandler } from './api/request'
+import { defHttp } from './api/compat'
+import { componentMap } from './components/schema-form/componentMap'
+import { createCompatMap } from './compat/componentMapCompat'
 import { setupOfflineIcons } from './components/icons'
 import './styles/index.css'
 
@@ -47,6 +51,14 @@ app.use(Antd)
 import * as VueLib from 'vue'
 import * as AntdLib from 'ant-design-vue'
 ;(window as any).__GUOBA_LIB__ = { Vue: VueLib, antd: AntdLib, router }
+/**
+ * 老锅巴（1.x）插件的自定义组件通过 assets/index.js 那份桥接拿运行环境，
+ * 这里把 Vue、请求工具和带 Map 语义的 componentMap 挂到全局。
+ * 桥接模块在 import 本文件之后才读这些值，顺序是安全的。
+ */
+;(window as any).__GUOBA_VUE__ = Vue
+;(window as any).__GUOBA_DEF_HTTP__ = defHttp
+;(window as any).__GUOBA_COMPONENT_MAP__ = createCompatMap(componentMap)
 
 app.mount('#app')
 
@@ -56,3 +68,4 @@ if (boot) {
   boot.style.opacity = '0'
   setTimeout(() => boot.remove(), 300)
 }
+
