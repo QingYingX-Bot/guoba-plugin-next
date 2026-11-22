@@ -56,6 +56,11 @@ export async function useCustomPagesMenu() {
     }
   }
   for (const [pluginName, items] of groups) {
+    // 只有一个页面时直接平铺，避免多出一层没有信息量的分组
+    if (items.length === 1) {
+      children.push(items[0])
+      continue
+    }
     const info = GuobaSupportMap.get(pluginName)?.pluginInfo
     children.push({
       path: `/custom/plugin/${pluginName}`,
