@@ -604,6 +604,8 @@ export interface LogLine {
 
 export interface LogTail {
   lines: LogLine[]
+  instance?: string
+  reset?: boolean
   /** 下次请求带上它取增量 */
   cursor: number
   /** 本次因超出 limit 被丢掉的行数 */
@@ -622,6 +624,7 @@ export interface LogStatus {
 }
 
 export const apiTailLog = (params: {
+  instance?: string
   cursor?: number
   limit?: number
   level?: string
